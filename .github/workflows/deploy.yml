@@ -1,0 +1,160 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+# Required GitHub secrets (configure in repo settings → Secrets and variables → Actions):
+#
+#   DO_HOST              — DigitalOcean droplet IP or hostname
+#   DO_USER              — SSH user on the droplet (e.g. "deploy" or "root")
+#   DO_SSH_KEY           — Private SSH key for the deploy user
+#   DOCKER_REGISTRY_USER — Container registry username (e.g. Docker Hub or GHCR)
+#   DOCKER_REGISTRY_TOKEN — Container registry token or password
+#
+# The deploy job SSH-es into the droplet and runs docker compose pull + up.
+# The droplet must have Docker and docker-compose installed.
+# Ensure your Caddyfile is on the droplet and Caddy is configured for YOUR_DOMAIN.
+
+env:
+  ELIXIR_VERSION: "1.19.5"
+  OTP_VERSION: "28"
+  # Change REGISTRY and IMAGE_NAME to match your container registry
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1. Run tests (same job as CI — ensures nothing deploys if tests fail)
+  # -------------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sudoku_race_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+        env:
+          MIX_ENV: test
+      - run: mix test
+        env:
+          MIX_ENV: test
+
+  # -------------------------------------------------------------------------
+  # 2. Build Docker image and push to container registry
+  # -------------------------------------------------------------------------
+  build:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKER_REGISTRY_USER }}
+          password: ${{ secrets.DOCKER_REGISTRY_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # -------------------------------------------------------------------------
+  # 3. Deploy to DigitalOcean droplet via SSH
+  # -------------------------------------------------------------------------
+  deploy:
+    name: Deploy to DigitalOcean
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - name: Checkout (for docker-compose.yml and Caddyfile)
+        uses: actions/checkout@v4
+
+      - name: Copy compose files to droplet
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          source: "docker-compose.yml,Caddyfile"
+          target: "/opt/sudoku_race"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/sudoku_race
+
+            # Log in to container registry
+            echo "${{ secrets.DOCKER_REGISTRY_TOKEN }}" | \
+              docker login ${{ env.REGISTRY }} \
+                -u "${{ secrets.DOCKER_REGISTRY_USER }}" \
+                --password-stdin
+
+            # Pull the new image
+            docker compose pull app
+
+            # Rolling restart: bring up new containers, remove old ones
+            docker compose up -d --remove-orphans
+
+            # Clean up dangling images
+            docker image prune -f
+
+            echo "Deploy complete. Running containers:"
+            docker compose ps

@@ -1,0 +1,29 @@
+# Caddyfile — reverse proxy for Sudoku Race
+#
+# Replace YOUR_DOMAIN with your actual domain before deploying.
+# Caddy will automatically obtain and renew a TLS certificate via Let's Encrypt.
+#
+# Example: sudoku.example.com
+
+YOUR_DOMAIN {
+    reverse_proxy app:4000
+
+    # Optional: increase timeouts for long-lived LiveView websocket connections
+    # reverse_proxy app:4000 {
+    #     transport http {
+    #         dial_timeout 10s
+    #         response_header_timeout 30s
+    #     }
+    # }
+
+    # Encode responses
+    encode gzip
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

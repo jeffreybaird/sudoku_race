@@ -1,0 +1,67 @@
+version: "3.9"
+
+# Single-host deployment: Phoenix app + Postgres + Caddy reverse proxy
+# Deploy behind Caddy which handles TLS via ACME (Let's Encrypt).
+#
+# Required environment variables (set in .env or via your CI/deploy tooling):
+#   DATABASE_URL     — ecto://postgres:PASSWORD@db/sudoku_race_prod
+#   SECRET_KEY_BASE  — generate with: mix phx.gen.secret
+#   PHX_HOST         — public hostname, e.g. sudoku.example.com
+#
+# Optional:
+#   POOL_SIZE        — Ecto pool size (default 10)
+#   PORT             — internal Phoenix port (default 4000, Caddy proxies to this)
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: sudoku_race_prod
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: sudoku_race:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-ecto://postgres:postgres@db/sudoku_race_prod}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?SECRET_KEY_BASE is required}
+      PHX_HOST: ${PHX_HOST:?PHX_HOST is required}
+      PHX_SERVER: "true"
+      PORT: "4000"
+      POOL_SIZE: ${POOL_SIZE:-10}
+    # Run migrations before starting the server
+    command: >
+      sh -c "bin/sudoku_race eval 'SudokuRace.Release.migrate()' && bin/sudoku_race start"
+    expose:
+      - "4000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
