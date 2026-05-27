@@ -64,7 +64,10 @@ defmodule SudokuRace.Release do
       |> Stream.reject(&is_nil/1)
       |> Stream.transform(nil, &sample_row(&1, &2, counters, target))
       |> Stream.chunk_every(batch_size)
-      |> Enum.reduce(0, fn batch, acc -> acc + Puzzles.import_puzzles(batch) end)
+      |> Enum.reduce(0, fn batch, acc ->
+        {:ok, count} = Puzzles.import_puzzles(batch)
+        acc + count
+      end)
 
     Agent.stop(counters)
 

@@ -181,22 +181,22 @@ defmodule SudokuRace.PuzzlesTest do
       }
     end
 
-    test "inserts new puzzles and returns count inserted" do
+    test "inserts new puzzles and returns {:ok, count} inserted" do
       rows = [puzzle_row(@clue_a), puzzle_row(@clue_b)]
-      assert Puzzles.import_puzzles(rows) == 2
+      assert {:ok, 2} = Puzzles.import_puzzles(rows)
     end
 
     test "re-running with same clues is a no-op (idempotent)" do
       rows = [puzzle_row(@clue_a)]
-      assert Puzzles.import_puzzles(rows) == 1
-      assert Puzzles.import_puzzles(rows) == 0
+      assert {:ok, 1} = Puzzles.import_puzzles(rows)
+      assert {:ok, 0} = Puzzles.import_puzzles(rows)
     end
 
     test "only inserts new rows when mixed with existing ones" do
       rows_first = [puzzle_row(@clue_a)]
       rows_second = [puzzle_row(@clue_a), puzzle_row(@clue_b)]
-      assert Puzzles.import_puzzles(rows_first) == 1
-      assert Puzzles.import_puzzles(rows_second) == 1
+      assert {:ok, 1} = Puzzles.import_puzzles(rows_first)
+      assert {:ok, 1} = Puzzles.import_puzzles(rows_second)
     end
   end
 
@@ -352,6 +352,43 @@ defmodule SudokuRace.PuzzlesTest do
 
     test "returns {:error, :not_found} for non-existent id" do
       assert {:error, :not_found} = Puzzles.get_puzzle(999_999_999)
+    end
+
+    test "accepts a string-integer id and returns {:ok, puzzle} for existing id" do
+      clue = String.duplicate("4", 35) <> String.duplicate("0", 46)
+
+      Puzzles.import_puzzles([
+        %{
+          clues: clue,
+          solution: String.duplicate("9", 81),
+          givens_count: 35,
+          difficulty: :easy
+        }
+      ])
+
+      [puzzle] = Puzzles.list_puzzles()
+      assert {:ok, fetched} = Puzzles.get_puzzle(Integer.to_string(puzzle.id))
+      assert fetched.id == puzzle.id
+    end
+
+    test "returns {:error, :not_found} for string-integer id of non-existent puzzle" do
+      assert {:error, :not_found} = Puzzles.get_puzzle("999999999")
+    end
+
+    test "returns {:error, :not_found} for non-numeric string" do
+      assert {:error, :not_found} = Puzzles.get_puzzle("abc")
+    end
+
+    test "returns {:error, :not_found} for empty string" do
+      assert {:error, :not_found} = Puzzles.get_puzzle("")
+    end
+
+    test "returns {:error, :not_found} for partial-prefix string like '123abc'" do
+      assert {:error, :not_found} = Puzzles.get_puzzle("123abc")
+    end
+
+    test "returns {:error, :not_found} for out-of-range (int4 overflow) string id" do
+      assert {:error, :not_found} = Puzzles.get_puzzle("99999999999999")
     end
   end
 end

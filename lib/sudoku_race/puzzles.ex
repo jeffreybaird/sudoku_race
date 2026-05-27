@@ -128,17 +128,34 @@ defmodule SudokuRace.Puzzles do
     |> Repo.aggregate(:count, :id)
   end
 
+  # PostgreSQL int4 max value.
+  @int4_max 2_147_483_647
+
   @doc """
   Fetches a single puzzle by id.
 
-  Returns `{:ok, puzzle}` on success or `{:error, :not_found}` if no puzzle
-  with that id exists.
+  Accepts either an integer or a string representation of an integer.
+  Strings are parsed strictly — partial matches like `"123abc"` are rejected.
+  Out-of-range values (negative, zero, or exceeding PostgreSQL int4 max) and
+  unknown ids return `{:error, :not_found}` without raising.
+
+  Returns `{:ok, puzzle}` on success or `{:error, :not_found}` otherwise.
   """
-  @spec get_puzzle(integer()) :: {:ok, Puzzle.t()} | {:error, :not_found}
-  def get_puzzle(id) do
+  @spec get_puzzle(integer() | String.t()) :: {:ok, Puzzle.t()} | {:error, :not_found}
+  def get_puzzle(id) when is_integer(id) do
     case Repo.get(Puzzle, id) do
       nil -> {:error, :not_found}
       puzzle -> {:ok, puzzle}
+    end
+  end
+
+  def get_puzzle(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {int_id, ""} when int_id > 0 and int_id <= @int4_max ->
+        get_puzzle(int_id)
+
+      _ ->
+        {:error, :not_found}
     end
   end
 
@@ -148,10 +165,11 @@ defmodule SudokuRace.Puzzles do
   Uses `on_conflict: :nothing` with `conflict_target: :clues` so that
   re-running the seed never duplicates existing puzzles.
 
-  Returns the count of rows actually inserted (skipped rows are not counted).
+  Returns `{:ok, count}` where `count` is the number of rows actually inserted
+  (skipped rows are not counted).
   Each map must include: `:clues`, `:solution`, `:givens_count`, `:difficulty`.
   """
-  @spec import_puzzles([map()]) :: non_neg_integer()
+  @spec import_puzzles([map()]) :: {:ok, non_neg_integer()}
   def import_puzzles(rows) when is_list(rows) do
     now = DateTime.utc_now(:second)
 
@@ -168,7 +186,7 @@ defmodule SudokuRace.Puzzles do
         conflict_target: :clues
       )
 
-    count
+    {:ok, count}
   end
 
   # ---------------------------------------------------------------------------
