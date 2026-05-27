@@ -2,10 +2,18 @@
 #
 #     mix run priv/repo/seeds.exs
 #
-# Inside the script, you can read and write to any of your
-# repositories directly:
+# In production, call the equivalent release task:
 #
-#     SudokuRace.Repo.insert!(%SudokuRace.SomeSchema{})
-#
-# We recommend using the bang functions (`insert!`, `update!`
-# and so on) as they will fail if something goes wrong.
+#     bin/sudoku_race eval "SudokuRace.Release.seed_puzzles()"
+
+alias SudokuRace.Release
+
+csv_path = Path.join(File.cwd!(), "data/sudoku.csv")
+
+if File.exists?(csv_path) do
+  {inserted, skipped} = Release.seed_puzzles_from_csv(csv_path)
+  IO.puts("Puzzles seeded: #{inserted} inserted, #{skipped} skipped (already existed)")
+else
+  IO.puts("Warning: #{csv_path} not found — skipping puzzle seeding.")
+  IO.puts("To seed puzzles, place sudoku.csv in the data/ directory and re-run.")
+end

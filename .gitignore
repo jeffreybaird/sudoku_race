@@ -35,10 +35,16 @@ sudoku_race-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Sudoku dataset CSV — large file, seeded at deploy time
+/data/*.csv
+
 # Environment files (never commit secrets)
 .env
 .env.local
 
 # AI agent tooling state, not project code
-/.claude/
+.claude/
+
+# macOS metadata files
+.DS_Store
 
