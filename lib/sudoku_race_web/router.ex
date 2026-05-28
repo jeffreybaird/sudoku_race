@@ -56,6 +56,8 @@ defmodule SudokuRaceWeb.Router do
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
       # Puzzle browsing requires authentication — only logged-in users can browse puzzles
       live "/puzzles", PuzzleLive.Index, :index
+      # Puzzle solve UI — behind auth; solver's own attempt is loaded on mount
+      live "/puzzles/:id", PuzzleLive.Show, :show
     end
 
     post "/users/update-password", UserSessionController, :update_password

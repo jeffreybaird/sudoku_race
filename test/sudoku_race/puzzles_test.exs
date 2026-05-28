@@ -391,4 +391,66 @@ defmodule SudokuRace.PuzzlesTest do
       assert {:error, :not_found} = Puzzles.get_puzzle("99999999999999")
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # get_playable_puzzle/1
+  # ---------------------------------------------------------------------------
+  describe "get_playable_puzzle/1" do
+    test "returns {:ok, map} with safe fields for an existing puzzle" do
+      clue = String.duplicate("5", 35) <> String.duplicate("0", 46)
+      solution = String.duplicate("9", 81)
+
+      Puzzles.import_puzzles([
+        %{
+          clues: clue,
+          solution: solution,
+          givens_count: 35,
+          difficulty: :easy
+        }
+      ])
+
+      [puzzle] = Puzzles.list_puzzles(difficulty: :easy)
+      assert {:ok, playable} = Puzzles.get_playable_puzzle(puzzle.id)
+
+      # Must have safe fields
+      assert playable.id == puzzle.id
+      assert playable.clues == clue
+      assert playable.difficulty == :easy
+      assert playable.givens_count == 35
+
+      # SECURITY: must NOT include the solution
+      refute Map.has_key?(playable, :solution)
+      # Must be a plain map, not a %Puzzle{} struct (which carries solution)
+      refute is_struct(playable)
+    end
+
+    test "returns {:error, :not_found} for a non-existent id" do
+      assert {:error, :not_found} = Puzzles.get_playable_puzzle(999_999_999)
+    end
+
+    test "returns {:error, :not_found} for a string id of a non-existent puzzle" do
+      assert {:error, :not_found} = Puzzles.get_playable_puzzle("999999999")
+    end
+
+    test "accepts a string integer id and returns {:ok, map} for existing puzzle" do
+      clue = String.duplicate("6", 35) <> String.duplicate("0", 46)
+
+      Puzzles.import_puzzles([
+        %{
+          clues: clue,
+          solution: String.duplicate("9", 81),
+          givens_count: 35,
+          difficulty: :easy
+        }
+      ])
+
+      [puzzle] = Puzzles.list_puzzles(difficulty: :easy)
+      assert {:ok, playable} = Puzzles.get_playable_puzzle(Integer.to_string(puzzle.id))
+      assert playable.id == puzzle.id
+    end
+
+    test "returns {:error, :not_found} for non-numeric string" do
+      assert {:error, :not_found} = Puzzles.get_playable_puzzle("not-a-number")
+    end
+  end
 end

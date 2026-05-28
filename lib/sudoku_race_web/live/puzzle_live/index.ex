@@ -189,9 +189,13 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
                 {puzzle.givens_count} givens
               </span>
             </div>
-            <span class="font-mono text-xs text-gray-400 truncate max-w-xs">
+            <.link
+              navigate={~p"/puzzles/#{puzzle.id}"}
+              class="font-mono text-xs text-indigo-600 hover:underline truncate max-w-xs"
+              data-test="puzzle-play-link"
+            >
               {String.slice(puzzle.clues, 0, 20)}…
-            </span>
+            </.link>
           </div>
         </div>
 

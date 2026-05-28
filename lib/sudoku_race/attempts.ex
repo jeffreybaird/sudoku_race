@@ -218,6 +218,48 @@ defmodule SudokuRace.Attempts do
   end
 
   # ---------------------------------------------------------------------------
+  # get_owner_attempt_for_puzzle/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the scoped user's attempt (any status) for the given puzzle.
+
+  Unlike `get_active_attempt/2`, this function returns the full `%Attempt{}`
+  struct for the owner's own attempt — covering `:in_progress`, `:paused`, and
+  `:completed` statuses. Timing fields are safe to expose to the solver because
+  they are their own attempt data.
+
+  `puzzle_id` accepts an integer or string-integer id.
+
+  Returns `{:ok, attempt}` when the user has an attempt for this puzzle.
+  Returns `{:error, :not_found}` when no attempt exists.
+  """
+  @spec get_owner_attempt_for_puzzle(Scope.t(), integer() | String.t()) ::
+          {:ok, Attempt.t()} | {:error, :not_found}
+  def get_owner_attempt_for_puzzle(%Scope{} = scope, puzzle_id) when is_integer(puzzle_id) do
+    result =
+      Attempt
+      |> where([a], a.user_id == ^scope.user.id)
+      |> where([a], a.puzzle_id == ^puzzle_id)
+      |> Repo.one()
+
+    case result do
+      nil -> {:error, :not_found}
+      attempt -> {:ok, attempt}
+    end
+  end
+
+  def get_owner_attempt_for_puzzle(%Scope{} = scope, puzzle_id) when is_binary(puzzle_id) do
+    case Integer.parse(puzzle_id) do
+      {int_id, ""} when int_id > 0 and int_id <= @int4_max ->
+        get_owner_attempt_for_puzzle(scope, int_id)
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # get_active_attempt/2
   # ---------------------------------------------------------------------------
 

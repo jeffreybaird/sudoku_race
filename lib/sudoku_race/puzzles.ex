@@ -160,6 +160,49 @@ defmodule SudokuRace.Puzzles do
   end
 
   @doc """
+  Fetches a puzzle's safe (non-solution) fields for the play UI.
+
+  Returns `{:ok, map}` with only the fields needed to render the grid:
+  `:id`, `:clues`, `:difficulty`, `:givens_count`. The `:solution` field is
+  deliberately excluded via a `select` so it never enters LiveView assigns or
+  the websocket payload.
+
+  Accepts either an integer or a string representation of an integer.
+  Strings are parsed strictly — partial matches like `"123abc"` are rejected.
+  Out-of-range values and unknown ids return `{:error, :not_found}`.
+  """
+  @spec get_playable_puzzle(integer() | String.t()) ::
+          {:ok, %{id: integer(), clues: String.t(), difficulty: atom(), givens_count: integer()}}
+          | {:error, :not_found}
+  def get_playable_puzzle(id) when is_integer(id) do
+    result =
+      Puzzle
+      |> where([p], p.id == ^id)
+      |> select([p], %{
+        id: p.id,
+        clues: p.clues,
+        difficulty: p.difficulty,
+        givens_count: p.givens_count
+      })
+      |> Repo.one()
+
+    case result do
+      nil -> {:error, :not_found}
+      playable -> {:ok, playable}
+    end
+  end
+
+  def get_playable_puzzle(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {int_id, ""} when int_id > 0 and int_id <= @int4_max ->
+        get_playable_puzzle(int_id)
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
   Bulk-inserts puzzles from a list of attribute maps.
 
   Uses `on_conflict: :nothing` with `conflict_target: :clues` so that

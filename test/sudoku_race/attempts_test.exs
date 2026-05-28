@@ -373,6 +373,104 @@ defmodule SudokuRace.AttemptsTest do
   end
 
   # ---------------------------------------------------------------------------
+  # get_owner_attempt_for_puzzle/2
+  # ---------------------------------------------------------------------------
+  describe "get_owner_attempt_for_puzzle/2" do
+    test "returns {:ok, attempt} for an in_progress attempt owned by the scope user" do
+      scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture()
+      {:ok, started} = Attempts.start_attempt(scope, puzzle)
+
+      assert {:ok, attempt} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
+      assert attempt.id == started.id
+      assert attempt.status == :in_progress
+    end
+
+    test "returns {:ok, attempt} for a paused attempt owned by the scope user" do
+      scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture()
+      {:ok, started} = Attempts.start_attempt(scope, puzzle)
+      {:ok, paused} = Attempts.pause_attempt(scope, started)
+
+      assert {:ok, attempt} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
+      assert attempt.id == paused.id
+      assert attempt.status == :paused
+    end
+
+    test "returns {:ok, attempt} for a completed attempt owned by the scope user" do
+      scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture(%{solution: String.duplicate("9", 81)})
+      {:ok, started} = Attempts.start_attempt(scope, puzzle)
+      {:ok, completed} = Attempts.submit_attempt(scope, started, String.duplicate("9", 81))
+
+      assert {:ok, attempt} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
+      assert attempt.id == completed.id
+      assert attempt.status == :completed
+    end
+
+    test "returns {:error, :not_found} when no attempt exists for this puzzle" do
+      scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture()
+
+      assert {:error, :not_found} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
+    end
+
+    test "returns {:error, :not_found} when another user has an attempt but the scope user does not" do
+      scope = user_scope_fixture()
+      other_scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture()
+      {:ok, _} = Attempts.start_attempt(other_scope, puzzle)
+
+      assert {:error, :not_found} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
+    end
+
+    test "returns full Attempt struct with timing fields (solver's own attempt)" do
+      scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture()
+      {:ok, _} = Attempts.start_attempt(scope, puzzle)
+
+      assert {:ok, attempt} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
+      assert is_struct(attempt, Attempt)
+      assert %DateTime{} = attempt.started_at
+      assert is_integer(attempt.accumulated_seconds)
+    end
+
+    test "accepts string numeric puzzle_id and resolves to the attempt" do
+      scope = user_scope_fixture()
+      puzzle = easy_puzzle_fixture()
+      {:ok, started} = Attempts.start_attempt(scope, puzzle)
+
+      assert {:ok, attempt} =
+               Attempts.get_owner_attempt_for_puzzle(scope, Integer.to_string(puzzle.id))
+
+      assert attempt.id == started.id
+    end
+
+    test "returns {:error, :not_found} for non-numeric string puzzle_id" do
+      scope = user_scope_fixture()
+      assert {:error, :not_found} = Attempts.get_owner_attempt_for_puzzle(scope, "abc")
+    end
+
+    test "returns {:error, :not_found} for empty string puzzle_id" do
+      scope = user_scope_fixture()
+      assert {:error, :not_found} = Attempts.get_owner_attempt_for_puzzle(scope, "")
+    end
+
+    test "returns {:error, :not_found} for out-of-range string puzzle_id" do
+      scope = user_scope_fixture()
+
+      assert {:error, :not_found} =
+               Attempts.get_owner_attempt_for_puzzle(scope, "99999999999999")
+    end
+
+    test "returns {:error, :not_found} for non-positive string puzzle_id" do
+      scope = user_scope_fixture()
+      assert {:error, :not_found} = Attempts.get_owner_attempt_for_puzzle(scope, "0")
+      assert {:error, :not_found} = Attempts.get_owner_attempt_for_puzzle(scope, "-1")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # get_active_attempt/2
   # ---------------------------------------------------------------------------
   describe "get_active_attempt/2" do
