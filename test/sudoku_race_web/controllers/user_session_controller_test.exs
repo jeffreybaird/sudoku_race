@@ -20,8 +20,11 @@ defmodule SudokuRaceWeb.UserSessionControllerTest do
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
 
-      # Now do a logged in request and assert on the menu
+      # Post-rebrand: logged-in "/" redirects to the puzzles app; the nav menu
+      # (email + settings + log-out) now lives in the app layout there.
       conn = get(conn, ~p"/")
+      assert redirected_to(conn) == ~p"/puzzles"
+      conn = get(conn, ~p"/puzzles")
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
@@ -84,8 +87,11 @@ defmodule SudokuRaceWeb.UserSessionControllerTest do
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
 
-      # Now do a logged in request and assert on the menu
+      # Post-rebrand: logged-in "/" redirects to the puzzles app; the nav menu
+      # (email + settings + log-out) now lives in the app layout there.
       conn = get(conn, ~p"/")
+      assert redirected_to(conn) == ~p"/puzzles"
+      conn = get(conn, ~p"/puzzles")
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
@@ -108,8 +114,11 @@ defmodule SudokuRaceWeb.UserSessionControllerTest do
 
       assert Accounts.get_user!(user.id).confirmed_at
 
-      # Now do a logged in request and assert on the menu
+      # Post-rebrand: logged-in "/" redirects to the puzzles app; the nav menu
+      # (email + settings + log-out) now lives in the app layout there.
       conn = get(conn, ~p"/")
+      assert redirected_to(conn) == ~p"/puzzles"
+      conn = get(conn, ~p"/puzzles")
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"

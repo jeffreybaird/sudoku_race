@@ -35,46 +35,78 @@ defmodule SudokuRaceWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li :if={@current_scope}>
-            <.link navigate={~p"/friends"} class="btn btn-ghost" data-test="nav-friends">
-              Friends
-            </.link>
-          </li>
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
+    <header class="border-b border-gray-200 bg-white">
+      <nav
+        class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8"
+        aria-label="Main navigation"
+      >
+        <.link
+          navigate={~p"/"}
+          data-test="nav-brand"
+          class="text-lg font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 rounded"
+        >
+          Sudoku Race
+        </.link>
+        <ul class="flex items-center gap-1 text-sm sm:gap-2">
+          <%= if @current_scope do %>
+            <li>
+              <.link navigate={~p"/puzzles"} data-test="nav-puzzles" class={nav_link_class()}>
+                Puzzles
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/friends"} data-test="nav-friends" class={nav_link_class()}>
+                Friends
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/leaderboard"} data-test="nav-leaderboard" class={nav_link_class()}>
+                Leaderboard
+              </.link>
+            </li>
+            <li class="hidden px-2 text-gray-500 sm:block" data-test="nav-email">
+              {@current_scope.user.email}
+            </li>
+            <li>
+              <.link href={~p"/users/settings"} class={nav_link_class()}>Settings</.link>
+            </li>
+            <li>
+              <.link
+                href={~p"/users/log-out"}
+                method="delete"
+                data-test="nav-logout"
+                class={nav_link_class()}
+              >
+                Log out
+              </.link>
+            </li>
+          <% else %>
+            <li>
+              <.link navigate={~p"/users/log-in"} data-test="nav-login" class={nav_link_class()}>
+                Log in
+              </.link>
+            </li>
+            <li>
+              <.link navigate={~p"/users/register"} data-test="nav-register" class={nav_link_class()}>
+                Register
+              </.link>
+            </li>
+          <% end %>
         </ul>
-      </div>
+      </nav>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
-        {render_slot(@inner_block)}
-      </div>
+    <main class="px-4 py-8 sm:px-6 lg:px-8">
+      {render_slot(@inner_block)}
     </main>
 
     <.flash_group flash={@flash} />
     """
+  end
+
+  # Shared style for the main-navigation links: visible focus ring per WCAG.
+  defp nav_link_class do
+    "rounded px-2 py-1 font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
   end
 
   @doc """
