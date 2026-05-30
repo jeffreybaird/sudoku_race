@@ -20,9 +20,10 @@ on:
 env:
   ELIXIR_VERSION: "1.19.5"
   OTP_VERSION: "28"
-  # Change REGISTRY and IMAGE_NAME to match your container registry
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Docker Hub. IMAGE_NAME is your Docker Hub repo: <namespace>/<image>, where
+  # the namespace is your Docker Hub username (DOCKER_REGISTRY_USER).
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKER_REGISTRY_USER }}/sudoku_race
 
 jobs:
   # -------------------------------------------------------------------------
@@ -70,9 +71,10 @@ jobs:
     name: Build & push image
     runs-on: ubuntu-latest
     needs: test
+    # Docker Hub auth is via DOCKER_REGISTRY_USER/TOKEN — no GITHUB_TOKEN
+    # packages scope needed (that was for GHCR).
     permissions:
       contents: read
-      packages: write
 
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}

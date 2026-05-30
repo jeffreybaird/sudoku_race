@@ -38,6 +38,8 @@ config are untouched.
    ```bash
    mkdir -p /opt/sudoku_race
    cat > /opt/sudoku_race/.env << 'EOF'
+   # Docker Hub image the CI build pushes (namespace = your Docker Hub user):
+   APP_IMAGE=docker.io/<dockerhub-user>/sudoku_race:latest
    POSTGRES_PASSWORD=<choose a strong password>
    DATABASE_URL=ecto://postgres:<same password>@db/sudoku_race_prod
    SECRET_KEY_BASE=<mix phx.gen.secret>
@@ -58,6 +60,9 @@ config are untouched.
 ## GitHub secrets
 
 `DO_HOST`, `DO_USER`, `DO_SSH_KEY`, `DOCKER_REGISTRY_USER`, `DOCKER_REGISTRY_TOKEN`.
+The image is pushed to **Docker Hub**: `DOCKER_REGISTRY_USER` is your Docker Hub
+username and `DOCKER_REGISTRY_TOKEN` a Docker Hub access token (Account Settings
+→ Security → New Access Token, read/write).
 `DO_USER` needs Docker access (root, or a user in the `docker` group) and write
 access to `/opt/sudoku_race` — residency's `deploy` user (sudo limited to
 `systemctl … residency_schedule`) is not sufficient.

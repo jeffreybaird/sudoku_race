@@ -35,7 +35,10 @@ services:
       retries: 5
 
   app:
-    image: sudoku_race:latest
+    # APP_IMAGE points at the Docker Hub image the CI build pushed, e.g.
+    # docker.io/<dockerhub-user>/sudoku_race:latest. Compose reads it from
+    # /opt/sudoku_race/.env so `docker compose pull` fetches the right image.
+    image: ${APP_IMAGE:-sudoku_race:latest}
     restart: unless-stopped
     depends_on:
       db:
