@@ -19,7 +19,9 @@ Small Elixir / Phoenix 1.8 / LiveView app. Two-to-handful-of-users toy: pick a s
 
 ### Erlang/OTP Version Policy
 
-Dev host runs OTP 29. Build, CI, and production pin **OTP 28** via `hexpm/elixir:1.19.5-erlang-28.5.0.1` — no official Elixir 1.19.5 + OTP 29 image exists on Docker Hub. This dev-vs-image skew is intentional: Phoenix releases bundle ERTS from the build image, so production always runs OTP 28 consistently. Do not change the Dockerfile or CI OTP version. Revisit only when Elixir is upgraded to a version that has an official OTP 29 image.
+Dev host runs OTP 29. Build, CI, and production pin **OTP 28** — no official Elixir 1.19.5 + OTP 29 image exists on Docker Hub. This dev-vs-image skew is intentional: Phoenix releases bundle ERTS from the build image, so production always runs OTP 28 consistently.
+
+The Dockerfile pins the newest OTP 28 **patch that hexpm/elixir publishes for linux/amd64** (currently `28.4.3` — `hexpm/elixir:1.19.5-erlang-28.4.3-debian-bookworm-20260518-slim`). The very latest patches land arm64-first; pinning an arm64-only tag (e.g. `28.5.0.1`) breaks the amd64 CI build with `no match for platform in manifest`. Keep the OTP **major** at 28; bump the patch only to track amd64 availability, and verify the chosen tag is multi-arch before changing it. Revisit the major only when Elixir is upgraded to a version that has an official OTP 29 image.
 
 ### Context Modules
 

@@ -3,7 +3,11 @@
 # Stage 1: build dependencies & compile assets
 # ---------------------------------------------------------------------------
 ARG ELIXIR_VERSION=1.19.5
-ARG OTP_VERSION=28.5.0.1
+# OTP 28, pinned to the newest patch that hexpm/elixir publishes for linux/amd64.
+# 28.5.0.1 exists only as arm64 right now, so an amd64 CI build (ubuntu-latest)
+# fails with "no match for platform in manifest". 28.4.3 is multi-arch
+# (amd64 + arm64). Still OTP 28 per the OTP version policy in CLAUDE.md.
+ARG OTP_VERSION=28.4.3
 ARG DEBIAN_VERSION=bookworm-20260518-slim
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
