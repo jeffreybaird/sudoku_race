@@ -14,7 +14,8 @@ on:
 #
 # The deploy job SSH-es into the droplet and runs docker compose pull + up.
 # The droplet must have Docker and docker-compose installed.
-# Ensure your Caddyfile is on the droplet and Caddy is configured for YOUR_DOMAIN.
+# TLS/proxy is handled by the host's existing Nginx (shared with other apps) —
+# install deploy/nginx/sudoku_race.conf once on the droplet (see DEPLOY.md).
 
 env:
   ELIXIR_VERSION: "1.19.5"
@@ -119,16 +120,16 @@ jobs:
     environment: production
 
     steps:
-      - name: Checkout (for docker-compose.yml and Caddyfile)
+      - name: Checkout (for docker-compose.yml)
         uses: actions/checkout@v4
 
-      - name: Copy compose files to droplet
+      - name: Copy compose file to droplet
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          source: "docker-compose.yml,Caddyfile"
+          source: "docker-compose.yml"
           target: "/opt/sudoku_race"
 
       - name: Deploy via SSH

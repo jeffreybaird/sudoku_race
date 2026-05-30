@@ -1,7 +1,12 @@
 version: "3.9"
 
-# Single-host deployment: Phoenix app + Postgres + Caddy reverse proxy
-# Deploy behind Caddy which handles TLS via ACME (Let's Encrypt).
+# Single-host deployment: Phoenix app + Postgres.
+#
+# TLS + reverse proxy are handled by the HOST's existing Nginx (shared with
+# other apps on the same droplet — see DEPLOY.md). This stack does NOT bind
+# host ports 80/443; it publishes the app only on 127.0.0.1:4001 for Nginx to
+# proxy to. This is what lets sudoku_race coexist with residency-schedule
+# (whose Nginx already owns 80/443 and whose app owns localhost:4000).
 #
 # Required environment variables (set in .env or via your CI/deploy tooling):
 #   DATABASE_URL     — ecto://postgres:PASSWORD@db/sudoku_race_prod
@@ -10,7 +15,8 @@ version: "3.9"
 #
 # Optional:
 #   POOL_SIZE        — Ecto pool size (default 10)
-#   PORT             — internal Phoenix port (default 4000, Caddy proxies to this)
+#   PORT             — internal Phoenix port (default 4000; Nginx proxies to
+#                      127.0.0.1:4001 → this container's 4000)
 
 services:
   db:
@@ -44,24 +50,10 @@ services:
     # Run migrations before starting the server
     command: >
       sh -c "bin/sudoku_race eval 'SudokuRace.Release.migrate()' && bin/sudoku_race start"
-    expose:
-      - "4000"
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - app
+    # Bind to loopback only — the host's Nginx proxies to this. Never publish
+    # 0.0.0.0:4001, and never reuse 4000 (residency-schedule's app owns it).
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"   # HTTP/3
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - "127.0.0.1:4001:4000"
 
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
