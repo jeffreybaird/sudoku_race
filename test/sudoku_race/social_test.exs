@@ -590,6 +590,17 @@ defmodule SudokuRace.SocialTest do
       assert length(requests) == 2
     end
 
+    test "preloads the requester so callers can display who sent each request" do
+      alice = user_fixture()
+      bob = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+
+      _req = pending_friendship_fixture(bob, alice)
+
+      [request] = Social.list_pending_requests(alice_scope)
+      assert request.requester.email == bob.email
+    end
+
     test "does not return requests where current user is the requester" do
       alice = user_fixture()
       bob = user_fixture()

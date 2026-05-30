@@ -179,7 +179,8 @@ defmodule SudokuRace.Social do
 
   @doc """
   Returns a paginated list of incoming pending friend requests where the current
-  user is the addressee.
+  user is the addressee. The `:requester` association is preloaded so callers can
+  display who sent each request.
 
   ## Options
 
@@ -195,6 +196,7 @@ defmodule SudokuRace.Social do
     |> order_by([f], asc: f.id)
     |> limit(^per_page)
     |> offset(^offset)
+    |> preload(:requester)
     |> Repo.all()
   end
 

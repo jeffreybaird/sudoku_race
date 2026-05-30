@@ -58,6 +58,8 @@ defmodule SudokuRaceWeb.Router do
       live "/puzzles", PuzzleLive.Index, :index
       # Puzzle solve UI — behind auth; solver's own attempt is loaded on mount
       live "/puzzles/:id", PuzzleLive.Show, :show
+      # Friend management — send requests, accept/decline, list friends
+      live "/friends", FriendLive.Index, :index
     end
 
     post "/users/update-password", UserSessionController, :update_password
