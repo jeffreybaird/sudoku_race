@@ -41,14 +41,18 @@ RUN mkdir config
 COPY config/config.exs config/${MIX_ENV}.exs config/
 RUN mix deps.compile
 
-# Copy assets and compile them
+# Compile the application FIRST. Phoenix 1.8 extracts colocated JS hooks into
+# the build dir during `mix compile`; esbuild resolves `phoenix-colocated/<app>`
+# from there (NODE_PATH includes Mix.Project.build_path/0 — see config.exs).
+# Running assets.deploy before compile fails with "Could not resolve
+# phoenix-colocated/sudoku_race".
 COPY priv priv
-COPY assets assets
-RUN mix assets.deploy
-
-# Compile the application
 COPY lib lib
 RUN mix compile
+
+# Now compile assets (esbuild can resolve the colocated hooks).
+COPY assets assets
+RUN mix assets.deploy
 
 # Copy remaining config (runtime.exs)
 COPY config/runtime.exs config/
