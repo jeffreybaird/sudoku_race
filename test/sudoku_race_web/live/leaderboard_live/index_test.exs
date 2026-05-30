@@ -18,16 +18,25 @@ defmodule SudokuRaceWeb.LeaderboardLive.IndexTest do
     completed
   end
 
-  # Inserts `n` easy puzzles with distinct clues and returns them. The shared
-  # difficulty fixtures only allow one puzzle per difficulty, so bulk seeding
-  # goes through the context directly.
+  # Inserts `n` easy puzzles and returns them. The shared difficulty fixtures
+  # only allow one puzzle per difficulty, so bulk seeding goes through the
+  # context directly.
+  #
+  # Clues are GLOBALLY UNIQUE (33 ones + a zero-padded index), deliberately
+  # outside the `clue_with_givens/1` range other tests use. This batch insert
+  # would otherwise contend on the `clues` unique index with concurrent async
+  # modules inserting overlapping fixed clues (e.g. all_difficulty_fixtures'
+  # 33/34/35), and two multi-row inserts locking the same keys in opposite
+  # order deadlock (Postgres 40P01). Unique keys ⇒ no shared locks ⇒ no deadlock.
   defp seed_easy_puzzles(n) do
     rows =
-      for g <- 20..(19 + n) do
+      for i <- 1..n do
+        clue = String.duplicate("1", 33) <> String.pad_leading(Integer.to_string(i), 48, "0")
+
         %{
-          clues: clue_with_givens(g),
+          clues: clue,
           solution: @solution,
-          givens_count: g,
+          givens_count: 33,
           difficulty: :easy
         }
       end
