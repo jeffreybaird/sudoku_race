@@ -44,6 +44,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
 
   alias SudokuRace.Attempts
   alias SudokuRace.Puzzles
+  alias SudokuRace.Social
 
   @impl true
   def mount(%{"id" => puzzle_id}, _session, socket) do
@@ -51,11 +52,17 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
 
     case Puzzles.get_playable_puzzle(puzzle_id) do
       {:ok, puzzle} ->
+        friend_ids =
+          scope
+          |> Social.list_friends(per_page: 100)
+          |> Enum.map(& &1.id)
+
         socket =
           socket
           |> assign(:puzzle, puzzle)
           |> assign(:status_message, nil)
           |> assign(:input_mode, :pointer)
+          |> assign(:friend_ids, friend_ids)
           |> load_attempt_state(scope, puzzle.id, puzzle.clues)
 
         {:ok, socket}
@@ -236,11 +243,19 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
 
     case Attempts.submit_attempt(scope, attempt, submitted) do
       {:ok, completed} ->
+        friend_times =
+          Attempts.friend_times_for_puzzle(
+            scope,
+            socket.assigns.puzzle.id,
+            socket.assigns.friend_ids
+          )
+
         socket =
           socket
           |> assign(:attempt, completed)
           |> assign(:view_state, :completed)
           |> assign(:status_message, nil)
+          |> assign(:friend_times, friend_times)
 
         {:noreply, socket}
 
@@ -513,18 +528,53 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               </button>
             </div>
           <% @view_state == :completed -> %>
-            <div class="rounded-lg border border-green-200 bg-green-50 shadow-sm p-8 text-center">
-              <h2 class="text-xl font-bold text-green-800 mb-2">Solved!</h2>
-              <p class="text-gray-600 mb-4 text-sm">Your time:</p>
-              <div class="text-4xl font-mono font-bold text-green-700 mb-6" data-test="completed-time">
-                {format_elapsed(@attempt.elapsed_seconds)}
+            <div class="rounded-lg border border-green-200 bg-green-50 shadow-sm p-8">
+              <h2 class="text-xl font-bold text-green-800 mb-2 text-center">Solved!</h2>
+
+              <%!-- My time --%>
+              <div class="text-center mb-6">
+                <p class="text-gray-600 mb-2 text-sm">Your time:</p>
+                <div
+                  class="text-4xl font-mono font-bold text-green-700"
+                  data-test="my-time"
+                  data-test2="completed-time"
+                >
+                  {format_elapsed(@attempt.elapsed_seconds)}
+                </div>
               </div>
-              <.link
-                navigate={~p"/puzzles"}
-                class="inline-flex items-center rounded-lg bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-              >
-                Back to Puzzles
-              </.link>
+
+              <%!-- Friend times (only rendered when assign is present — i.e. view_state == :completed) --%>
+              <%= if @friend_times != [] do %>
+                <div
+                  class="mb-6"
+                  data-test="friend-times-table"
+                  aria-label="Friend times for this puzzle"
+                >
+                  <h3 class="text-sm font-semibold text-gray-700 mb-2">Friend times:</h3>
+                  <ul class="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+                    <%= for entry <- @friend_times do %>
+                      <li
+                        class="flex items-center justify-between px-4 py-2 text-sm"
+                        data-test="friend-time-row"
+                      >
+                        <span class="text-gray-700 truncate">{entry.user.email}</span>
+                        <span class="font-mono text-gray-900 ml-4">
+                          {format_elapsed(entry.elapsed_seconds)}
+                        </span>
+                      </li>
+                    <% end %>
+                  </ul>
+                </div>
+              <% end %>
+
+              <div class="text-center">
+                <.link
+                  navigate={~p"/puzzles"}
+                  class="inline-flex items-center rounded-lg bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                >
+                  Back to Puzzles
+                </.link>
+              </div>
             </div>
           <% true -> %>
             <%!-- Fallback: should not be reached --%>
@@ -641,6 +691,18 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           |> assign(:view_state, view_state)
           |> assign(:grid, grid)
           |> assign(:focused_cell, focused)
+
+        socket =
+          if view_state == :completed do
+            friend_ids = Map.get(socket.assigns, :friend_ids, [])
+
+            friend_times =
+              Attempts.friend_times_for_puzzle(scope, puzzle_id, friend_ids)
+
+            assign(socket, :friend_times, friend_times)
+          else
+            socket
+          end
 
         if view_state == :playing do
           push_timer_seed(socket, attempt)

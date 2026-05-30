@@ -15,6 +15,15 @@ defmodule SudokuRace.Puzzles do
 
   Thresholds chosen to produce a non-degenerate three-band split across the
   real data. Higher givens = more information = easier puzzle.
+
+  ## Cross-context EXISTS subqueries
+
+  `list_puzzles/1` and `count_puzzles/1` accept a `:status` filter that
+  correlates against the `attempts` table (owned by the `Attempts` context).
+  This is an intentional cross-context query — the app is small enough that
+  a separate read-model or denormalized table would be over-engineering.
+  The query never modifies `attempts` and uses only a correlated EXISTS
+  subquery, keeping the dependency read-only and unidirectional.
   """
 
   import Ecto.Query
@@ -87,13 +96,29 @@ defmodule SudokuRace.Puzzles do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Returns a paginated list of puzzles, optionally filtered by difficulty.
+  Returns a paginated list of puzzles, optionally filtered by difficulty and/or
+  friend-relative status.
 
   ## Options
 
   - `:page`       — 1-based page number (default: 1)
   - `:per_page`   — results per page, capped at #{@max_per_page} (default: #{@default_per_page})
   - `:difficulty` — one of `:easy`, `:medium`, `:hard`; omit for all difficulties
+  - `:status`     — one of `:i_solved`, `:friend_solved`, `:unsolved`; omit for no filter.
+                    Requires `:user_id` and `:friend_ids` when provided.
+  - `:user_id`    — integer user id of the current user (required when `:status` is set)
+  - `:friend_ids` — list of integer user ids of accepted friends (required when `:status` is set)
+  - `:hide_mine`  — when `true`, excludes puzzles the current user has already
+                    completed. Independent of `:status`; requires `:user_id`.
+
+  ### Status semantics
+
+  - `:i_solved`      — current user has a `:completed` attempt on this puzzle
+  - `:friend_solved` — at least one friend has a `:completed` attempt (regardless of
+                       whether the current user has also solved it). Pair with
+                       `:hide_mine` to drop puzzles you've already solved.
+  - `:unsolved`      — no `:completed` attempt from current user or any friend
+                       (`:in_progress`/`:paused` attempts do not count as solved)
 
   """
   @spec list_puzzles(keyword()) :: [Puzzle.t()]
@@ -101,10 +126,16 @@ defmodule SudokuRace.Puzzles do
     page = Keyword.get(opts, :page, 1)
     per_page = opts |> Keyword.get(:per_page, @default_per_page) |> min(@max_per_page)
     difficulty = Keyword.get(opts, :difficulty)
+    status = Keyword.get(opts, :status)
+    user_id = Keyword.get(opts, :user_id)
+    friend_ids = Keyword.get(opts, :friend_ids, [])
+    hide_mine = Keyword.get(opts, :hide_mine, false)
     offset = (page - 1) * per_page
 
-    Puzzle
+    from(p in Puzzle, as: :puzzle)
     |> apply_difficulty_filter(difficulty)
+    |> apply_status_filter(status, user_id, friend_ids)
+    |> apply_hide_mine(hide_mine, user_id)
     |> order_by([p], asc: p.id)
     |> limit(^per_page)
     |> offset(^offset)
@@ -112,19 +143,31 @@ defmodule SudokuRace.Puzzles do
   end
 
   @doc """
-  Counts puzzles, optionally filtered by difficulty.
+  Counts puzzles, optionally filtered by difficulty and/or friend-relative status.
 
   ## Options
 
   - `:difficulty` — one of `:easy`, `:medium`, `:hard`; omit for all difficulties
+  - `:status`     — one of `:i_solved`, `:friend_solved`, `:unsolved`; omit for no filter.
+                    Requires `:user_id` and `:friend_ids` when provided.
+  - `:user_id`    — integer user id of the current user (required when `:status` is set)
+  - `:friend_ids` — list of integer user ids of accepted friends (required when `:status` is set)
+  - `:hide_mine`  — when `true`, excludes puzzles the current user has already
+                    completed. Independent of `:status`; requires `:user_id`.
 
   """
   @spec count_puzzles(keyword()) :: non_neg_integer()
   def count_puzzles(opts \\ []) do
     difficulty = Keyword.get(opts, :difficulty)
+    status = Keyword.get(opts, :status)
+    user_id = Keyword.get(opts, :user_id)
+    friend_ids = Keyword.get(opts, :friend_ids, [])
+    hide_mine = Keyword.get(opts, :hide_mine, false)
 
-    Puzzle
+    from(p in Puzzle, as: :puzzle)
     |> apply_difficulty_filter(difficulty)
+    |> apply_status_filter(status, user_id, friend_ids)
+    |> apply_hide_mine(hide_mine, user_id)
     |> Repo.aggregate(:count, :id)
   end
 
@@ -241,4 +284,85 @@ defmodule SudokuRace.Puzzles do
   defp apply_difficulty_filter(query, difficulty) do
     where(query, [p], p.difficulty == ^difficulty)
   end
+
+  # Status filter — shared predicate helper used by both list_puzzles and
+  # count_puzzles so counts never diverge from listed results.
+  #
+  # :i_solved      — EXISTS a completed attempt by the current user
+  # :friend_solved — EXISTS a completed attempt by a friend (independent of
+  #                  whether the current user has also solved it). Use the
+  #                  :hide_mine filter to drop the user's own solves.
+  # :unsolved      — NOT EXISTS any completed attempt by current user or friends
+  # nil            — no additional filter
+
+  defp apply_status_filter(query, nil, _user_id, _friend_ids), do: query
+
+  defp apply_status_filter(query, :i_solved, user_id, _friend_ids) do
+    where(
+      query,
+      [p],
+      exists(
+        from(a in "attempts",
+          where: a.puzzle_id == parent_as(:puzzle).id,
+          where: a.user_id == ^user_id,
+          where: a.status == ^"completed",
+          select: 1
+        )
+      )
+    )
+  end
+
+  defp apply_status_filter(query, :friend_solved, _user_id, []), do: where(query, false)
+
+  defp apply_status_filter(query, :friend_solved, _user_id, friend_ids) do
+    where(
+      query,
+      [p],
+      exists(
+        from(a in "attempts",
+          where: a.puzzle_id == parent_as(:puzzle).id,
+          where: a.user_id in ^friend_ids,
+          where: a.status == ^"completed",
+          select: 1
+        )
+      )
+    )
+  end
+
+  defp apply_status_filter(query, :unsolved, user_id, friend_ids) do
+    solved_user_ids = [user_id | friend_ids]
+
+    where(
+      query,
+      [p],
+      not exists(
+        from(a in "attempts",
+          where: a.puzzle_id == parent_as(:puzzle).id,
+          where: a.user_id in ^solved_user_ids,
+          where: a.status == ^"completed",
+          select: 1
+        )
+      )
+    )
+  end
+
+  # Excludes puzzles the current user has already completed. Independent of the
+  # status filter so it can compose with :friend_solved ("friends' puzzles I
+  # haven't done yet"). A no-op when disabled or when user_id is missing.
+  defp apply_hide_mine(query, true, user_id) when is_integer(user_id) do
+    where(
+      query,
+      [p],
+      not exists(
+        from(a in "attempts",
+          where: a.puzzle_id == parent_as(:puzzle).id,
+          where: a.user_id == ^user_id,
+          where: a.status == ^"completed",
+          select: 1
+        )
+      )
+    )
+  end
+
+  defp apply_hide_mine(query, _hide_mine, _user_id), do: query
 end

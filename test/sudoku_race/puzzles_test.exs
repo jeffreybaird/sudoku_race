@@ -393,6 +393,281 @@ defmodule SudokuRace.PuzzlesTest do
   end
 
   # ---------------------------------------------------------------------------
+  # list_puzzles/2 and count_puzzles/2 — status filter
+  # ---------------------------------------------------------------------------
+  describe "list_puzzles/2 and count_puzzles/2 with status filter" do
+    import SudokuRace.AccountsFixtures
+    import SudokuRace.AttemptsFixtures, only: [puzzle_fixture: 0]
+    alias SudokuRace.Attempts
+    alias SudokuRace.SocialFixtures
+
+    # Helper: complete a puzzle attempt for a given scope.
+    # puzzle_fixture/0 uses solution = String.duplicate("9", 81).
+    defp complete_attempt(scope, puzzle) do
+      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, _} = Attempts.submit_attempt(scope, attempt, String.duplicate("9", 81))
+    end
+
+    # puzzle_fixture/0 always returns the same fixed-clue row, so tests needing
+    # multiple distinct puzzles build them by unique givens count.
+    defp distinct_puzzle(givens) do
+      clue = String.duplicate("1", givens) <> String.duplicate("0", 81 - givens)
+
+      Puzzles.import_puzzles([
+        %{
+          clues: clue,
+          solution: String.duplicate("9", 81),
+          givens_count: givens,
+          difficulty: :easy
+        }
+      ])
+
+      Puzzles.list_puzzles(per_page: 100) |> Enum.find(&(&1.clues == clue))
+    end
+
+    setup do
+      me = user_fixture()
+      my_scope = user_scope_fixture(me)
+
+      friend = user_fixture()
+      friend_scope = user_scope_fixture(friend)
+
+      stranger = user_fixture()
+      stranger_scope = user_scope_fixture(stranger)
+
+      # accepted friendship between me and friend
+      SocialFixtures.accepted_friendship_fixture(me, friend)
+      friend_ids = [friend.id]
+
+      {:ok,
+       me: me,
+       my_scope: my_scope,
+       friend: friend,
+       friend_scope: friend_scope,
+       stranger: stranger,
+       stranger_scope: stranger_scope,
+       friend_ids: friend_ids}
+    end
+
+    test ":i_solved — puzzle where I completed → included", ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.my_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :i_solved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    test ":i_solved — puzzle where only friend completed → excluded", ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.friend_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :i_solved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      refute puzzle.id in ids
+    end
+
+    test ":friend_solved — puzzle where friend completed and I did not → included", ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.friend_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(
+          status: :friend_solved,
+          user_id: ctx.me.id,
+          friend_ids: ctx.friend_ids
+        )
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    # Product decision (user-directed): :friend_solved now means "any puzzle a
+    # friend solved", regardless of whether the current user also solved it.
+    # Excluding the user's own solves moved to the independent :hide_mine filter.
+    test ":friend_solved — puzzle where both I and friend completed → IS included",
+         ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.my_scope, puzzle)
+      complete_attempt(ctx.friend_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(
+          status: :friend_solved,
+          user_id: ctx.me.id,
+          friend_ids: ctx.friend_ids
+        )
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    test ":friend_solved with hide_mine: true — puzzle I also solved is excluded", ctx do
+      mine_and_friends = distinct_puzzle(30)
+      friends_only = distinct_puzzle(31)
+      complete_attempt(ctx.my_scope, mine_and_friends)
+      complete_attempt(ctx.friend_scope, mine_and_friends)
+      complete_attempt(ctx.friend_scope, friends_only)
+
+      results =
+        Puzzles.list_puzzles(
+          status: :friend_solved,
+          hide_mine: true,
+          user_id: ctx.me.id,
+          friend_ids: ctx.friend_ids
+        )
+
+      ids = Enum.map(results, & &1.id)
+      refute mine_and_friends.id in ids
+      assert friends_only.id in ids
+    end
+
+    test "hide_mine: true (no status) excludes only puzzles I have completed", ctx do
+      solved = distinct_puzzle(30)
+      unsolved = distinct_puzzle(31)
+      complete_attempt(ctx.my_scope, solved)
+
+      results = Puzzles.list_puzzles(hide_mine: true, user_id: ctx.me.id)
+      ids = Enum.map(results, & &1.id)
+      refute solved.id in ids
+      assert unsolved.id in ids
+    end
+
+    test "count_puzzles respects hide_mine so pagination stays consistent", ctx do
+      solved = distinct_puzzle(30)
+      _unsolved = distinct_puzzle(31)
+      complete_attempt(ctx.my_scope, solved)
+
+      all = Puzzles.count_puzzles([])
+      hidden = Puzzles.count_puzzles(hide_mine: true, user_id: ctx.me.id)
+      assert hidden == all - 1
+    end
+
+    test ":i_solved — puzzle where both I and friend completed → IS included",
+         ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.my_scope, puzzle)
+      complete_attempt(ctx.friend_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :i_solved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    test ":unsolved — puzzle with no attempts → included", ctx do
+      puzzle = puzzle_fixture()
+
+      results =
+        Puzzles.list_puzzles(status: :unsolved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    test ":unsolved — puzzle where I have in_progress attempt → still included", ctx do
+      puzzle = puzzle_fixture()
+      {:ok, _} = Attempts.start_attempt(ctx.my_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :unsolved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    test ":unsolved — puzzle where only friend has in_progress attempt → still included", ctx do
+      puzzle = puzzle_fixture()
+      {:ok, _} = Attempts.start_attempt(ctx.friend_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :unsolved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+
+    test ":unsolved — puzzle where I completed → NOT included", ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.my_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :unsolved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      refute puzzle.id in ids
+    end
+
+    test ":unsolved — puzzle where only friend completed → NOT included", ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.friend_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(status: :unsolved, user_id: ctx.me.id, friend_ids: ctx.friend_ids)
+
+      ids = Enum.map(results, & &1.id)
+      refute puzzle.id in ids
+    end
+
+    test ":friend_solved with friend_ids: [] → always empty", ctx do
+      puzzle = puzzle_fixture()
+      complete_attempt(ctx.friend_scope, puzzle)
+
+      results = Puzzles.list_puzzles(status: :friend_solved, user_id: ctx.me.id, friend_ids: [])
+      assert results == []
+    end
+
+    test "scoping: stranger's friend completing puzzle does NOT appear in my :friend_solved",
+         ctx do
+      puzzle = puzzle_fixture()
+      # stranger's friend completes the puzzle — should NOT affect ctx.me's view
+      complete_attempt(ctx.stranger_scope, puzzle)
+
+      results =
+        Puzzles.list_puzzles(
+          status: :friend_solved,
+          user_id: ctx.me.id,
+          friend_ids: ctx.friend_ids
+        )
+
+      ids = Enum.map(results, & &1.id)
+      refute puzzle.id in ids
+    end
+
+    test "count_puzzles == length(list_puzzles) per bucket when per_page exceeds total", ctx do
+      puzzle_a = puzzle_fixture()
+      puzzle_b = puzzle_fixture()
+
+      # puzzle_a: I solved; puzzle_b: friend solved
+      complete_attempt(ctx.my_scope, puzzle_a)
+      complete_attempt(ctx.friend_scope, puzzle_b)
+
+      for status <- [:i_solved, :friend_solved, :unsolved] do
+        opts = [status: status, user_id: ctx.me.id, friend_ids: ctx.friend_ids, per_page: 100]
+        listed = Puzzles.list_puzzles(opts)
+        counted = Puzzles.count_puzzles(opts)
+
+        assert counted == length(listed),
+               "count_puzzles and list_puzzles disagree for status=#{status}: #{counted} vs #{length(listed)}"
+      end
+    end
+
+    test "nil status → no filtering (all puzzles returned)", _ctx do
+      puzzle = puzzle_fixture()
+
+      # nil status = existing behavior
+      results = Puzzles.list_puzzles([])
+      ids = Enum.map(results, & &1.id)
+      assert puzzle.id in ids
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # get_playable_puzzle/1
   # ---------------------------------------------------------------------------
   describe "get_playable_puzzle/1" do

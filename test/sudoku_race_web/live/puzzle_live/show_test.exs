@@ -865,6 +865,142 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Friend times — completed view only
+  # ---------------------------------------------------------------------------
+  describe "friend times in completed view" do
+    setup :register_and_log_in_user
+
+    import SudokuRace.AccountsFixtures, only: [user_fixture: 0, user_scope_fixture: 1]
+    import SudokuRace.SocialFixtures, only: [accepted_friendship_fixture: 2]
+
+    defp complete_for(scope, puzzle) do
+      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, _} = Attempts.submit_attempt(scope, attempt, @solution)
+    end
+
+    test "friend_times NOT in assigns when view_state is :start (defense-in-depth)", %{conn: conn} do
+      puzzle = puzzle_fixture_secure()
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      refute Map.has_key?(assigns, :friend_times)
+    end
+
+    test "friend_times NOT in assigns when view_state is :playing (defense-in-depth)", %{
+      conn: conn,
+      scope: scope
+    } do
+      puzzle = puzzle_fixture_secure()
+      {:ok, _} = Attempts.start_attempt(scope, puzzle)
+
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      refute Map.has_key?(assigns, :friend_times)
+    end
+
+    test "friend_times NOT in assigns when view_state is :paused (defense-in-depth)", %{
+      conn: conn,
+      scope: scope
+    } do
+      puzzle = puzzle_fixture_secure()
+      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, _} = Attempts.pause_attempt(scope, attempt)
+
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      refute Map.has_key?(assigns, :friend_times)
+    end
+
+    test "friend_times IS in assigns when view_state is :completed", %{
+      conn: conn,
+      scope: scope
+    } do
+      puzzle = puzzle_fixture_secure()
+      complete_for(scope, puzzle)
+
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Map.has_key?(assigns, :friend_times)
+    end
+
+    test "friend times table renders for a friend who completed", %{
+      conn: conn,
+      user: me,
+      scope: my_scope
+    } do
+      friend = user_fixture()
+      friend_scope = user_scope_fixture(friend)
+      accepted_friendship_fixture(me, friend)
+
+      puzzle = puzzle_fixture_secure()
+      complete_for(my_scope, puzzle)
+      complete_for(friend_scope, puzzle)
+
+      {:ok, _view, html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assert html =~ ~s(data-test="friend-times-table")
+      assert html =~ friend.email
+    end
+
+    test "friend times table NOT rendered in non-completed state", %{
+      conn: conn,
+      user: me,
+      scope: my_scope
+    } do
+      friend = user_fixture()
+      friend_scope = user_scope_fixture(friend)
+      accepted_friendship_fixture(me, friend)
+
+      puzzle = puzzle_fixture_secure()
+      {:ok, _} = Attempts.start_attempt(my_scope, puzzle)
+      complete_for(friend_scope, puzzle)
+
+      {:ok, _view, html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      refute html =~ ~s(data-test="friend-times-table")
+    end
+
+    test "friend times table absent when no friends completed (but I completed)", %{
+      conn: conn,
+      scope: my_scope
+    } do
+      puzzle = puzzle_fixture_secure()
+      complete_for(my_scope, puzzle)
+
+      {:ok, _view, html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      # Table may render but should be empty or absent — no friend rows
+      refute html =~ ~s(data-test="friend-time-row")
+    end
+
+    test "stranger's completion time NOT shown", %{conn: conn, scope: my_scope} do
+      stranger = user_fixture()
+      stranger_scope = user_scope_fixture(stranger)
+      # No friendship with stranger
+
+      puzzle = puzzle_fixture_secure()
+      complete_for(my_scope, puzzle)
+      complete_for(stranger_scope, puzzle)
+
+      {:ok, _view, html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      refute html =~ stranger.email
+    end
+
+    test "my own time is shown in the completed view", %{conn: conn, scope: my_scope} do
+      puzzle = puzzle_fixture_secure()
+      complete_for(my_scope, puzzle)
+
+      {:ok, _view, html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assert html =~ ~s(data-test="my-time")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Index → Show navigation link
   # ---------------------------------------------------------------------------
   describe "index page has navigation link to show" do

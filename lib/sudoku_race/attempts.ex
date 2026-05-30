@@ -11,6 +11,7 @@ defmodule SudokuRace.Attempts do
   import Ecto.Query
 
   alias SudokuRace.Accounts.Scope
+  alias SudokuRace.Accounts.User
   alias SudokuRace.Attempts.Attempt
   alias SudokuRace.Puzzles.Puzzle
   alias SudokuRace.Repo
@@ -286,6 +287,177 @@ defmodule SudokuRace.Attempts do
     |> where([a], a.status in [:in_progress, :paused])
     |> select([a], a.status)
     |> Repo.one()
+  end
+
+  # ---------------------------------------------------------------------------
+  # friend_times_for_puzzle/3
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns completed attempt times for accepted friends on a given puzzle,
+  but ONLY when the current user (scope) has also completed the puzzle.
+
+  Privacy gate: if the scoped user has not completed this puzzle, returns `[]`
+  immediately. This check is part of the single database query via a correlated
+  EXISTS subquery — no separate SELECT is issued first.
+
+  Each entry in the returned list is a map:
+
+      %{
+        user: %User{},
+        elapsed_seconds: integer(),
+        completed_at: DateTime.t()
+      }
+
+  Results are ordered by `elapsed_seconds` ascending (fastest first).
+
+  `puzzle_id` accepts an integer or string-integer. Invalid strings,
+  out-of-range values, and unknown ids return `[]` without raising.
+  Returns `[]` immediately when `friend_ids` is empty.
+  """
+  @spec friend_times_for_puzzle(Scope.t(), integer() | String.t(), [integer()]) :: [map()]
+  def friend_times_for_puzzle(%Scope{}, _puzzle_id, []), do: []
+
+  def friend_times_for_puzzle(%Scope{} = scope, puzzle_id, friend_ids)
+      when is_binary(puzzle_id) do
+    case Integer.parse(puzzle_id) do
+      {int_id, ""} when int_id > 0 and int_id <= @int4_max ->
+        friend_times_for_puzzle(scope, int_id, friend_ids)
+
+      _ ->
+        []
+    end
+  end
+
+  def friend_times_for_puzzle(%Scope{} = scope, puzzle_id, friend_ids)
+      when is_integer(puzzle_id) and puzzle_id > 0 and puzzle_id <= @int4_max do
+    user_id = scope.user.id
+
+    Attempt
+    |> join(:inner, [a], u in User, on: u.id == a.user_id)
+    |> where([a], a.puzzle_id == ^puzzle_id)
+    |> where([a], a.user_id in ^friend_ids)
+    |> where([a], a.status == :completed)
+    |> where(
+      [a],
+      exists(
+        from(self_a in Attempt,
+          where: self_a.puzzle_id == ^puzzle_id,
+          where: self_a.user_id == ^user_id,
+          where: self_a.status == :completed,
+          select: 1
+        )
+      )
+    )
+    |> order_by([a], asc: a.elapsed_seconds)
+    |> select([a, u], %{user: u, elapsed_seconds: a.elapsed_seconds, completed_at: a.completed_at})
+    |> Repo.all()
+  end
+
+  def friend_times_for_puzzle(%Scope{}, _puzzle_id, _friend_ids), do: []
+
+  # ---------------------------------------------------------------------------
+  # friend_leaderboard/3
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns a friends-only leaderboard: every puzzle a friend has completed,
+  fastest solve first.
+
+  This is NOT a public leaderboard. Only completed attempts whose `user_id` is
+  in `friend_ids` are included — a non-friend's data is never exposed. Callers
+  pass the scoped user's accepted-friend ids (both directions).
+
+  Each entry is a map:
+
+      %{
+        user: %User{},
+        puzzle: %Puzzle{},
+        elapsed_seconds: integer(),
+        completed_at: DateTime.t()
+      }
+
+  Results are ordered by `elapsed_seconds` ascending (fastest first), then by
+  `completed_at` ascending as a stable tiebreak.
+
+  Returns `[]` immediately when `friend_ids` is empty.
+
+  ## Options
+
+  - `:page`     — 1-based page number (default: 1)
+  - `:per_page` — results per page, capped at #{@max_per_page} (default: #{@default_per_page})
+  """
+  @spec friend_leaderboard(Scope.t(), [integer()], keyword()) :: [map()]
+  def friend_leaderboard(scope, friend_ids, opts \\ [])
+
+  def friend_leaderboard(%Scope{}, [], _opts), do: []
+
+  def friend_leaderboard(%Scope{}, friend_ids, opts) when is_list(friend_ids) do
+    page = Keyword.get(opts, :page, 1)
+    per_page = opts |> Keyword.get(:per_page, @default_per_page) |> min(@max_per_page)
+    offset = (page - 1) * per_page
+
+    Attempt
+    |> join(:inner, [a], u in User, on: u.id == a.user_id)
+    |> join(:inner, [a], p in Puzzle, on: p.id == a.puzzle_id)
+    |> where([a], a.user_id in ^friend_ids)
+    |> where([a], a.status == :completed)
+    |> order_by([a], asc: a.elapsed_seconds, asc: a.completed_at)
+    |> limit(^per_page)
+    |> offset(^offset)
+    |> select([a, u, p], %{
+      user: u,
+      puzzle: p,
+      elapsed_seconds: a.elapsed_seconds,
+      completed_at: a.completed_at
+    })
+    |> Repo.all()
+  end
+
+  # ---------------------------------------------------------------------------
+  # fastest_friend_times_for_puzzles/3
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the fastest friend solve for each of the given puzzles, keyed by
+  puzzle id.
+
+  Unlike `friend_times_for_puzzle/3`, there is NO privacy gate: this surfaces a
+  friend's time even on puzzles the current user has not solved — it backs the
+  "Friend Solved" puzzle list, whose whole purpose is showing friends' solves.
+  Only `:completed` attempts by users in `friend_ids` are considered.
+
+  The result is a map; each value is:
+
+      %{user: %User{}, elapsed_seconds: integer(), completed_at: DateTime.t()}
+
+  Puzzles with no friend solve are simply absent from the map. Returns `%{}`
+  when `friend_ids` or `puzzle_ids` is empty. Batched over all puzzle ids in a
+  single query (no N+1).
+  """
+  @spec fastest_friend_times_for_puzzles(Scope.t(), [integer()], [integer()]) :: %{
+          integer() => map()
+        }
+  def fastest_friend_times_for_puzzles(%Scope{}, [], _puzzle_ids), do: %{}
+  def fastest_friend_times_for_puzzles(%Scope{}, _friend_ids, []), do: %{}
+
+  def fastest_friend_times_for_puzzles(%Scope{}, friend_ids, puzzle_ids)
+      when is_list(friend_ids) and is_list(puzzle_ids) do
+    Attempt
+    |> join(:inner, [a], u in User, on: u.id == a.user_id)
+    |> where([a], a.user_id in ^friend_ids)
+    |> where([a], a.puzzle_id in ^puzzle_ids)
+    |> where([a], a.status == :completed)
+    # DISTINCT ON (puzzle_id) keeps the first row per puzzle after ordering, so
+    # the lowest elapsed_seconds wins — and we keep the solver's identity too.
+    |> distinct([a], a.puzzle_id)
+    |> order_by([a], asc: a.puzzle_id, asc: a.elapsed_seconds)
+    |> select(
+      [a, u],
+      {a.puzzle_id, %{user: u, elapsed_seconds: a.elapsed_seconds, completed_at: a.completed_at}}
+    )
+    |> Repo.all()
+    |> Map.new()
   end
 
   # ---------------------------------------------------------------------------

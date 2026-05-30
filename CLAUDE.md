@@ -160,7 +160,8 @@ Test suite = ratchet, only moves forward.
 - No client-trusted timer end-time.
 
 ### Scope — explicit non-goals
-- No groups, no public leaderboards, no chat. Friendship is one-to-one.
+- No groups, no chat. Friendship is one-to-one.
+- No PUBLIC leaderboards. A friends-only leaderboard (puzzles your friends solved, with their times) IS allowed — it never exposes a non-friend's data and is scoped to accepted friendships in both directions.
 - No puzzle generator. Use the seeded pool.
 - No native mobile app. Responsive web only.
 - No payments.

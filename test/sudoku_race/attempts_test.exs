@@ -603,6 +603,167 @@ defmodule SudokuRace.AttemptsTest do
   end
 
   # ---------------------------------------------------------------------------
+  # friend_times_for_puzzle/3
+  # ---------------------------------------------------------------------------
+  describe "friend_times_for_puzzle/3" do
+    import SudokuRace.SocialFixtures, only: [accepted_friendship_fixture: 2]
+
+    # Helper: start + submit attempt for scope on puzzle, returns completed attempt.
+    defp complete(scope, puzzle) do
+      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, completed} = Attempts.submit_attempt(scope, attempt, String.duplicate("9", 81))
+      completed
+    end
+
+    setup do
+      me = user_fixture()
+      my_scope = user_scope_fixture(me)
+
+      friend_a = user_fixture()
+      friend_b = user_fixture()
+      friend_a_scope = user_scope_fixture(friend_a)
+      friend_b_scope = user_scope_fixture(friend_b)
+
+      stranger = user_fixture()
+      stranger_scope = user_scope_fixture(stranger)
+
+      accepted_friendship_fixture(me, friend_a)
+      accepted_friendship_fixture(me, friend_b)
+
+      puzzle = easy_puzzle_fixture(%{solution: String.duplicate("9", 81)})
+
+      {:ok,
+       me: me,
+       my_scope: my_scope,
+       friend_a: friend_a,
+       friend_a_scope: friend_a_scope,
+       friend_b: friend_b,
+       friend_b_scope: friend_b_scope,
+       stranger: stranger,
+       stranger_scope: stranger_scope,
+       puzzle: puzzle,
+       friend_ids: [friend_a.id, friend_b.id]}
+    end
+
+    test "returns [] when current user has NOT completed the puzzle (privacy gate)", ctx do
+      # I have not completed — friend has
+      complete(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "returns [] when current user is in_progress (privacy gate)", ctx do
+      {:ok, _} = Attempts.start_attempt(ctx.my_scope, ctx.puzzle)
+      complete(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "returns [] when current user is paused (privacy gate)", ctx do
+      {:ok, attempt} = Attempts.start_attempt(ctx.my_scope, ctx.puzzle)
+      {:ok, _} = Attempts.pause_attempt(ctx.my_scope, attempt)
+      complete(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "returns [] when current user completed but no friends completed", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "returns friend's entry when both current user and friend completed", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+      complete(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert length(result) == 1
+      [entry] = result
+      assert entry.user.id == ctx.friend_a.id
+      assert is_integer(entry.elapsed_seconds)
+      assert %DateTime{} = entry.completed_at
+    end
+
+    test "excludes friends who are in_progress but not completed", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+      # friend_a only started, not completed
+      {:ok, _} = Attempts.start_attempt(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "excludes strangers even if they completed", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+      complete(ctx.stranger_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "includes multiple friends who completed, ordered by elapsed_seconds ASC", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+
+      # friend_a completes first (should have lower elapsed_seconds in practice,
+      # but elapsed_seconds is computed server-side at submission time; we can't
+      # control the exact order reliably in tests). Instead we verify both appear
+      # and that the list is sorted.
+      complete(ctx.friend_a_scope, ctx.puzzle)
+      complete(ctx.friend_b_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      assert length(result) == 2
+
+      user_ids = Enum.map(result, & &1.user.id)
+      assert ctx.friend_a.id in user_ids
+      assert ctx.friend_b.id in user_ids
+
+      # Verify ascending order by elapsed_seconds
+      elapsed = Enum.map(result, & &1.elapsed_seconds)
+      assert elapsed == Enum.sort(elapsed)
+    end
+
+    test "returns [] when friend_ids is empty (even if I completed)", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+      complete(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, [])
+      assert result == []
+    end
+
+    test "returns [] for a bad string puzzle_id (never raises)", ctx do
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, "not-an-id", ctx.friend_ids)
+      assert result == []
+    end
+
+    test "returns [] for an out-of-range puzzle_id string", ctx do
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, "99999999999999", ctx.friend_ids)
+      assert result == []
+    end
+
+    test "returns [] for an integer puzzle_id that doesn't exist", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, 999_999_999, ctx.friend_ids)
+      assert result == []
+    end
+
+    test "user field carries email for display when no other name field exists", ctx do
+      complete(ctx.my_scope, ctx.puzzle)
+      complete(ctx.friend_a_scope, ctx.puzzle)
+
+      result = Attempts.friend_times_for_puzzle(ctx.my_scope, ctx.puzzle.id, ctx.friend_ids)
+      [entry] = result
+      assert is_binary(entry.user.email)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # get_attempt/2
   # ---------------------------------------------------------------------------
   describe "get_attempt/2" do
@@ -670,6 +831,208 @@ defmodule SudokuRace.AttemptsTest do
       # int4 max is 2_147_483_647; exceeding it must not raise a DBConnection.EncodeError
       assert {:error, :not_found} = Attempts.get_attempt(scope, 2_147_483_648)
       assert {:error, :not_found} = Attempts.get_attempt(scope, 99_999_999_999_999_999_999)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # friend_leaderboard/3
+  # ---------------------------------------------------------------------------
+  describe "friend_leaderboard/3" do
+    setup do
+      me = user_fixture()
+      my_scope = user_scope_fixture(me)
+
+      friend = user_fixture()
+      friend_scope = user_scope_fixture(friend)
+
+      stranger = user_fixture()
+      stranger_scope = user_scope_fixture(stranger)
+
+      puzzle_a = easy_puzzle_fixture(%{solution: String.duplicate("9", 81)})
+      puzzle_b = medium_puzzle_fixture(%{solution: String.duplicate("9", 81)})
+
+      {:ok,
+       my_scope: my_scope,
+       friend: friend,
+       friend_scope: friend_scope,
+       stranger_scope: stranger_scope,
+       puzzle_a: puzzle_a,
+       puzzle_b: puzzle_b,
+       friend_ids: [friend.id]}
+    end
+
+    test "returns [] when friend_ids is empty", ctx do
+      complete(ctx.friend_scope, ctx.puzzle_a)
+      assert Attempts.friend_leaderboard(ctx.my_scope, []) == []
+    end
+
+    test "returns a friend's completed solves with puzzle and user", ctx do
+      complete(ctx.friend_scope, ctx.puzzle_a)
+
+      [entry] = Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids)
+      assert entry.user.id == ctx.friend.id
+      assert entry.puzzle.id == ctx.puzzle_a.id
+      assert is_integer(entry.elapsed_seconds)
+      assert %DateTime{} = entry.completed_at
+    end
+
+    test "includes every puzzle a friend solved", ctx do
+      complete(ctx.friend_scope, ctx.puzzle_a)
+      complete(ctx.friend_scope, ctx.puzzle_b)
+
+      result = Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids)
+      puzzle_ids = Enum.map(result, & &1.puzzle.id)
+      assert length(result) == 2
+      assert ctx.puzzle_a.id in puzzle_ids
+      assert ctx.puzzle_b.id in puzzle_ids
+    end
+
+    test "excludes strangers' solves even though they are not in friend_ids", ctx do
+      complete(ctx.stranger_scope, ctx.puzzle_a)
+
+      assert Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids) == []
+    end
+
+    test "excludes in-progress (not completed) attempts", ctx do
+      {:ok, _} = Attempts.start_attempt(ctx.friend_scope, ctx.puzzle_a)
+
+      assert Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids) == []
+    end
+
+    test "orders by elapsed_seconds ascending (fastest first)", ctx do
+      complete(ctx.friend_scope, ctx.puzzle_a)
+      complete(ctx.friend_scope, ctx.puzzle_b)
+
+      result = Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids)
+      elapsed = Enum.map(result, & &1.elapsed_seconds)
+      assert elapsed == Enum.sort(elapsed)
+    end
+
+    test "paginates results", ctx do
+      complete(ctx.friend_scope, ctx.puzzle_a)
+      complete(ctx.friend_scope, ctx.puzzle_b)
+
+      page1 = Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids, page: 1, per_page: 1)
+      page2 = Attempts.friend_leaderboard(ctx.my_scope, ctx.friend_ids, page: 2, per_page: 1)
+
+      assert length(page1) == 1
+      assert length(page2) == 1
+      refute hd(page1).puzzle.id == hd(page2).puzzle.id
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # fastest_friend_times_for_puzzles/3
+  # ---------------------------------------------------------------------------
+  describe "fastest_friend_times_for_puzzles/3" do
+    setup do
+      me = user_fixture()
+      my_scope = user_scope_fixture(me)
+      friend = user_fixture()
+      friend_scope = user_scope_fixture(friend)
+      stranger_scope = user_scope_fixture(user_fixture())
+      puzzle = easy_puzzle_fixture(%{solution: String.duplicate("9", 81)})
+
+      {:ok,
+       my_scope: my_scope,
+       friend: friend,
+       friend_scope: friend_scope,
+       stranger_scope: stranger_scope,
+       puzzle: puzzle,
+       friend_ids: [friend.id]}
+    end
+
+    test "returns %{} when friend_ids is empty", ctx do
+      complete(ctx.friend_scope, ctx.puzzle)
+      assert Attempts.fastest_friend_times_for_puzzles(ctx.my_scope, [], [ctx.puzzle.id]) == %{}
+    end
+
+    test "returns %{} when puzzle_ids is empty", ctx do
+      complete(ctx.friend_scope, ctx.puzzle)
+      assert Attempts.fastest_friend_times_for_puzzles(ctx.my_scope, ctx.friend_ids, []) == %{}
+    end
+
+    test "returns the friend's solve keyed by puzzle id", ctx do
+      complete(ctx.friend_scope, ctx.puzzle)
+
+      result =
+        Attempts.fastest_friend_times_for_puzzles(ctx.my_scope, ctx.friend_ids, [ctx.puzzle.id])
+
+      entry = result[ctx.puzzle.id]
+      assert entry.user.id == ctx.friend.id
+      assert is_integer(entry.elapsed_seconds)
+      assert %DateTime{} = entry.completed_at
+    end
+
+    test "has no privacy gate — surfaces friend time even if I have not solved", ctx do
+      # The current user never completes the puzzle, yet the friend's time shows.
+      complete(ctx.friend_scope, ctx.puzzle)
+
+      result =
+        Attempts.fastest_friend_times_for_puzzles(ctx.my_scope, ctx.friend_ids, [ctx.puzzle.id])
+
+      assert Map.has_key?(result, ctx.puzzle.id)
+    end
+
+    test "excludes solves by users not in friend_ids", ctx do
+      complete(ctx.stranger_scope, ctx.puzzle)
+
+      result =
+        Attempts.fastest_friend_times_for_puzzles(ctx.my_scope, ctx.friend_ids, [ctx.puzzle.id])
+
+      assert result == %{}
+    end
+
+    test "returns the FASTEST friend when two friends solved the same puzzle", ctx do
+      slow = user_fixture()
+      fast = user_fixture()
+      now = ~U[2024-01-01 00:00:00.000000Z]
+
+      # Insert completed attempts directly so elapsed_seconds is controlled —
+      # submit_attempt computes it server-side and would be ~0 for both.
+      SudokuRace.Repo.insert!(%Attempt{
+        user_id: slow.id,
+        puzzle_id: ctx.puzzle.id,
+        status: :completed,
+        started_at: now,
+        completed_at: now,
+        elapsed_seconds: 300
+      })
+
+      SudokuRace.Repo.insert!(%Attempt{
+        user_id: fast.id,
+        puzzle_id: ctx.puzzle.id,
+        status: :completed,
+        started_at: now,
+        completed_at: now,
+        elapsed_seconds: 42
+      })
+
+      result =
+        Attempts.fastest_friend_times_for_puzzles(
+          ctx.my_scope,
+          [slow.id, fast.id],
+          [ctx.puzzle.id]
+        )
+
+      entry = result[ctx.puzzle.id]
+      assert entry.user.id == fast.id
+      assert entry.elapsed_seconds == 42
+    end
+
+    test "omits puzzles with no friend solve", ctx do
+      other = medium_puzzle_fixture(%{solution: String.duplicate("9", 81)})
+      complete(ctx.friend_scope, ctx.puzzle)
+
+      result =
+        Attempts.fastest_friend_times_for_puzzles(
+          ctx.my_scope,
+          ctx.friend_ids,
+          [ctx.puzzle.id, other.id]
+        )
+
+      assert Map.has_key?(result, ctx.puzzle.id)
+      refute Map.has_key?(result, other.id)
     end
   end
 end

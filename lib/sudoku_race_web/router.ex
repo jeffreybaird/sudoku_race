@@ -60,6 +60,8 @@ defmodule SudokuRaceWeb.Router do
       live "/puzzles/:id", PuzzleLive.Show, :show
       # Friend management — send requests, accept/decline, list friends
       live "/friends", FriendLive.Index, :index
+      # Friends-only leaderboard — puzzles friends solved, fastest first
+      live "/leaderboard", LeaderboardLive.Index, :index
     end
 
     post "/users/update-password", UserSessionController, :update_password

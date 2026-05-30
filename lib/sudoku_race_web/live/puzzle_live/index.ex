@@ -2,23 +2,36 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
   @moduledoc """
   LiveView for browsing the puzzle pool.
 
-  Allows authenticated users to browse puzzles with difficulty filtering
-  and pagination. Difficulty is the only filter available at this stage.
+  Allows authenticated users to browse puzzles with difficulty and status
+  filtering and pagination. Friend ids are loaded once in mount and cached
+  in assigns — no re-query on each filter event.
   """
 
   use SudokuRaceWeb, :live_view
 
+  alias SudokuRace.Attempts
   alias SudokuRace.Puzzles
+  alias SudokuRace.Social
 
   @per_page 20
 
   @impl true
   def mount(_params, _session, socket) do
+    scope = socket.assigns.current_scope
+
+    friend_ids =
+      scope
+      |> Social.list_friends(per_page: 100)
+      |> Enum.map(& &1.id)
+
     {:ok,
      socket
      |> assign(:difficulty, nil)
+     |> assign(:status, nil)
+     |> assign(:hide_mine, false)
      |> assign(:page, 1)
      |> assign(:per_page, @per_page)
+     |> assign(:friend_ids, friend_ids)
      |> load_puzzles()}
   end
 
@@ -45,6 +58,33 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
   end
 
   @impl true
+  def handle_event("filter_status", %{"status" => status}, socket) do
+    parsed =
+      case status do
+        "i_solved" -> :i_solved
+        "friend_solved" -> :friend_solved
+        "unsolved" -> :unsolved
+        _ -> nil
+      end
+
+    {:noreply,
+     socket
+     |> assign(:status, parsed)
+     |> assign(:hide_mine, false)
+     |> assign(:page, 1)
+     |> load_puzzles()}
+  end
+
+  @impl true
+  def handle_event("toggle_hide_mine", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:hide_mine, !socket.assigns.hide_mine)
+     |> assign(:page, 1)
+     |> load_puzzles()}
+  end
+
+  @impl true
   def handle_event("next_page", _params, socket) do
     {:noreply,
      socket
@@ -63,24 +103,69 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
   end
 
   defp load_puzzles(socket) do
-    %{difficulty: difficulty, page: page, per_page: per_page} = socket.assigns
+    %{
+      difficulty: difficulty,
+      status: status,
+      hide_mine: hide_mine,
+      page: page,
+      per_page: per_page,
+      friend_ids: friend_ids,
+      current_scope: scope
+    } = socket.assigns
+
+    base_opts = [page: page, per_page: per_page]
 
     opts =
-      [page: page, per_page: per_page]
+      base_opts
       |> maybe_put_difficulty(difficulty)
+      |> maybe_put_status(status, scope.user.id, friend_ids)
+      |> maybe_put_hide_mine(hide_mine, scope.user.id)
+
+    count_opts =
+      []
+      |> maybe_put_difficulty(difficulty)
+      |> maybe_put_status(status, scope.user.id, friend_ids)
+      |> maybe_put_hide_mine(hide_mine, scope.user.id)
 
     puzzles = Puzzles.list_puzzles(opts)
-    total = Puzzles.count_puzzles(maybe_put_difficulty([], difficulty))
+    total = Puzzles.count_puzzles(count_opts)
 
     socket
     |> stream(:puzzles, puzzles, reset: true)
+    |> assign(:friend_times, friend_times_lookup(scope, status, friend_ids, puzzles))
     |> assign(:total_puzzles, total)
     |> assign(:has_next, page * per_page < total)
     |> assign(:has_prev, page > 1)
   end
 
+  # Friend solve times are only shown — and only queried — on the friend_solved
+  # tab. Batched over the current page's puzzles to avoid an N+1.
+  defp friend_times_lookup(scope, :friend_solved, friend_ids, puzzles) do
+    puzzle_ids = Enum.map(puzzles, & &1.id)
+    Attempts.fastest_friend_times_for_puzzles(scope, friend_ids, puzzle_ids)
+  end
+
+  defp friend_times_lookup(_scope, _status, _friend_ids, _puzzles), do: %{}
+
   defp maybe_put_difficulty(opts, nil), do: opts
   defp maybe_put_difficulty(opts, difficulty), do: Keyword.put(opts, :difficulty, difficulty)
+
+  defp maybe_put_status(opts, nil, _user_id, _friend_ids), do: opts
+
+  defp maybe_put_status(opts, status, user_id, friend_ids) do
+    opts
+    |> Keyword.put(:status, status)
+    |> Keyword.put(:user_id, user_id)
+    |> Keyword.put(:friend_ids, friend_ids)
+  end
+
+  defp maybe_put_hide_mine(opts, false, _user_id), do: opts
+
+  defp maybe_put_hide_mine(opts, true, user_id) do
+    opts
+    |> Keyword.put(:hide_mine, true)
+    |> Keyword.put_new(:user_id, user_id)
+  end
 
   @impl true
   def render(assigns) do
@@ -90,7 +175,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
         <h1 class="text-2xl font-bold text-gray-900 mb-6">Puzzles</h1>
 
         <%!-- Difficulty filter controls --%>
-        <nav aria-label="Filter puzzles by difficulty" class="mb-6 flex gap-2">
+        <nav aria-label="Filter puzzles by difficulty" class="mb-4 flex gap-2">
           <button
             type="button"
             data-test="filter-all"
@@ -157,6 +242,99 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
           </button>
         </nav>
 
+        <%!-- Status filter controls --%>
+        <nav aria-label="Filter puzzles by completion status" class="mb-6 flex gap-2">
+          <button
+            type="button"
+            data-test="filter-status-all"
+            phx-click="filter_status"
+            phx-value-status="all"
+            class={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500",
+              if(@status == nil,
+                do: "bg-indigo-600 text-white",
+                else: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )
+            ]}
+            aria-pressed={@status == nil}
+            aria-label="Show all puzzles"
+          >
+            All
+          </button>
+          <button
+            type="button"
+            data-test="filter-status-i-solved"
+            phx-click="filter_status"
+            phx-value-status="i_solved"
+            class={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500",
+              if(@status == :i_solved,
+                do: "bg-emerald-600 text-white",
+                else: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )
+            ]}
+            aria-pressed={@status == :i_solved}
+            aria-label="Show puzzles I have solved"
+          >
+            I Solved
+          </button>
+          <button
+            type="button"
+            data-test="filter-status-friend-solved"
+            phx-click="filter_status"
+            phx-value-status="friend_solved"
+            class={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500",
+              if(@status == :friend_solved,
+                do: "bg-blue-600 text-white",
+                else: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )
+            ]}
+            aria-pressed={@status == :friend_solved}
+            aria-label="Show puzzles a friend solved"
+          >
+            Friend Solved
+          </button>
+          <button
+            type="button"
+            data-test="filter-status-unsolved"
+            phx-click="filter_status"
+            phx-value-status="unsolved"
+            class={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500",
+              if(@status == :unsolved,
+                do: "bg-slate-600 text-white",
+                else: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )
+            ]}
+            aria-pressed={@status == :unsolved}
+            aria-label="Show unsolved puzzles"
+          >
+            Unsolved
+          </button>
+        </nav>
+
+        <%!-- Hide-mine toggle — only meaningful on the Friend Solved tab --%>
+        <div :if={@status == :friend_solved} class="mb-6">
+          <button
+            type="button"
+            data-test="toggle-hide-mine"
+            phx-click="toggle_hide_mine"
+            aria-pressed={@hide_mine}
+            class={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500",
+              if(@hide_mine,
+                do: "bg-blue-600 text-white",
+                else: "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )
+            ]}
+          >
+            {if @hide_mine,
+              do: "Showing only puzzles I haven't solved",
+              else: "Hide puzzles I've solved"}
+          </button>
+        </div>
+
         <%!-- Puzzle list --%>
         <%= if @total_puzzles == 0 do %>
           <div class="rounded-lg border border-gray-200 bg-white shadow-sm px-6 py-8 text-center text-gray-500">
@@ -188,13 +366,24 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
               <span class="text-sm text-gray-500">
                 {puzzle.givens_count} givens
               </span>
+              <span
+                :if={@friend_times[puzzle.id]}
+                data-test="friend-solve"
+                class="text-sm text-blue-700"
+              >
+                <span data-test="friend-solve-email">{@friend_times[puzzle.id].user.email}</span>
+                solved in
+                <span data-test="friend-solve-time" class="font-mono font-medium">
+                  {format_elapsed(@friend_times[puzzle.id].elapsed_seconds)}
+                </span>
+              </span>
             </div>
             <.link
               navigate={~p"/puzzles/#{puzzle.id}"}
-              class="font-mono text-xs text-indigo-600 hover:underline truncate max-w-xs"
+              class="text-sm font-medium text-indigo-600 hover:underline"
               data-test="puzzle-play-link"
             >
-              {String.slice(puzzle.clues, 0, 20)}…
+              Play
             </.link>
           </div>
         </div>
@@ -238,4 +427,10 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
   defp difficulty_badge_class(:easy), do: "bg-green-100 text-green-800"
   defp difficulty_badge_class(:medium), do: "bg-yellow-100 text-yellow-800"
   defp difficulty_badge_class(:hard), do: "bg-red-100 text-red-800"
+
+  defp format_elapsed(seconds) do
+    minutes = div(seconds, 60)
+    secs = rem(seconds, 60)
+    "#{minutes}:#{String.pad_leading(Integer.to_string(secs), 2, "0")}"
+  end
 end
