@@ -50,9 +50,9 @@ services:
       PHX_SERVER: "true"
       PORT: "4000"
       POOL_SIZE: ${POOL_SIZE:-10}
-    # Run migrations before starting the server
-    command: >
-      sh -c "bin/sudoku_race eval 'SudokuRace.Release.migrate()' && bin/sudoku_race start"
+    # Migrations run as an explicit, deploy-gating step in the deploy workflow
+    # (docker compose run --rm app … migrate), so the server command just starts.
+    command: ["bin/sudoku_race", "start"]
     # Bind to loopback only — the host's Nginx proxies to this. Never publish
     # 0.0.0.0:4001, and never reuse 4000 (residency-schedule's app owns it).
     ports:

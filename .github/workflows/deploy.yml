@@ -150,8 +150,14 @@ jobs:
                 -u "${{ secrets.DOCKER_REGISTRY_USER }}" \
                 --password-stdin
 
-            # Pull the new image
-            docker compose pull app
+            # Pull the new image (and db image if missing)
+            docker compose pull
+
+            # Run DB migrations as an explicit, deploy-gating step. `run --rm`
+            # blocks and exits non-zero on failure, so `set -e` fails the deploy
+            # instead of leaving a crash-looping app behind. depends_on waits for
+            # the db to be healthy first.
+            docker compose run --rm app bin/sudoku_race eval 'SudokuRace.Release.migrate()'
 
             # Rolling restart: bring up new containers, remove old ones
             docker compose up -d --remove-orphans
