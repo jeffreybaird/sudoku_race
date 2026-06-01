@@ -34,9 +34,28 @@ config are untouched.
    ```bash
    curl -fsSL https://get.docker.com | sh
    ```
-2. **Create the app dir + env file** (root):
+2. **Create the deploy user + app dir** (root). `DO_USER` is the GitHub secret —
+   the user CI logs in as. It must own `/opt/sudoku_race` (so the SCP step can
+   write) and be able to run Docker. Do **not** reuse residency's locked-down
+   `deploy` user (no Docker, `/opt` not writable → the SCP fails with
+   `create folder /opt/sudoku_race … status 1`).
    ```bash
+   # Example dedicated user; set DO_USER to match (here: "sudoku").
+   useradd -m -s /bin/bash sudoku
+   usermod -aG docker sudoku                  # run docker without sudo
    mkdir -p /opt/sudoku_race
+   chown -R sudoku:sudoku /opt/sudoku_race    # <-- lets the SCP step write here
+
+   # Install the deploy SSH public key (matches DO_SSH_KEY):
+   install -d -m 700 -o sudoku -g sudoku /home/sudoku/.ssh
+   echo "<DO_SSH public key>" >> /home/sudoku/.ssh/authorized_keys
+   chmod 600 /home/sudoku/.ssh/authorized_keys
+   chown sudoku:sudoku /home/sudoku/.ssh/authorized_keys
+   ```
+   Already deployed once as the wrong user? Just fix ownership:
+   `sudo chown -R $DO_USER /opt/sudoku_race`.
+3. **Create the env file** (as `DO_USER`, so it owns it):
+   ```bash
    cat > /opt/sudoku_race/.env << 'EOF'
    # Docker Hub image the CI build pushes (namespace = your Docker Hub user):
    APP_IMAGE=docker.io/<dockerhub-user>/sudoku_race:latest
@@ -48,7 +67,7 @@ config are untouched.
    EOF
    chmod 600 /opt/sudoku_race/.env
    ```
-3. **Add the Nginx site** (shares the existing Nginx; routes by `server_name`):
+4. **Add the Nginx site** (shares the existing Nginx; routes by `server_name`):
    ```bash
    cp deploy/nginx/sudoku_race.conf /etc/nginx/sites-available/sudoku_race
    # edit YOUR_DOMAIN → your subdomain
