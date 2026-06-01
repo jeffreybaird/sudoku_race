@@ -493,38 +493,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               class="fixed left-0 top-0 h-px w-px opacity-0"
             />
 
-            <%!-- Number pad. Touch: a 3-column dialpad that fits narrow phones with 44px+ targets. Pointer: a compact row, since typing is primary on desktop. --%>
-            <%= if @input_mode == :touch do %>
-              <div class="mt-4" aria-label="Number pad">
-                <div class="mx-auto grid max-w-xs grid-cols-3 gap-2">
-                  <%= for digit <- 1..9 do %>
-                    <button
-                      type="button"
-                      data-test="numpad-button"
-                      phx-click="cell_entry"
-                      phx-value-position={@focused_cell}
-                      phx-value-value={Integer.to_string(digit)}
-                      class="flex h-14 min-h-[44px] items-center justify-center rounded-lg bg-gray-100 text-xl font-semibold text-gray-800 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                      aria-label={"Enter #{digit}"}
-                    >
-                      {digit}
-                    </button>
-                  <% end %>
-                  <button
-                    type="button"
-                    data-test="numpad-erase"
-                    phx-click="cell_entry"
-                    phx-value-position={@focused_cell}
-                    phx-value-value="0"
-                    class="col-span-3 flex h-12 min-h-[44px] items-center justify-center rounded-lg bg-gray-100 text-base font-medium text-gray-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                    aria-label="Erase cell"
-                  >
-                    Erase
-                  </button>
-                </div>
-              </div>
-            <% else %>
-              <%!-- Pointer mode: typing is primary; offer a compact tappable row too --%>
+            <%!-- Number pad — pointer/desktop only. On touch the native numeric keyboard (summoned on cell tap) is the input method; an on-screen pad would dock beneath that keyboard and is omitted. --%>
+            <%= if @input_mode == :pointer do %>
               <div class="mt-4 grid grid-cols-9 gap-1" aria-label="Number pad">
                 <%= for digit <- 1..9 do %>
                   <button

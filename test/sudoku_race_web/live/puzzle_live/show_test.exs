@@ -666,7 +666,7 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Mobile touch entry — native numeric keyboard + usable on-screen number pad
+  # Mobile touch entry — native numeric keyboard is the touch input method
   # ---------------------------------------------------------------------------
   describe "mobile touch entry" do
     setup :register_and_log_in_user
@@ -699,33 +699,20 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       assert has_element?(view, "[data-test='mobile-entry'][inputmode='numeric']")
     end
 
-    test "touch mode shows a dialpad with an erase control", %{conn: conn, puzzle: puzzle} do
+    test "the on-screen number pad is shown for pointer but hidden for touch", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
       {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
 
-      # Pointer mode (default) has no erase control.
-      refute has_element?(view, "[data-test='numpad-erase']")
-
-      view |> element("[data-test='input-mode-toggle']") |> render_click()
-
-      assert has_element?(view, "[data-test='numpad-erase']")
+      # Pointer mode (default) offers the tappable number pad.
       assert has_element?(view, "[data-test='numpad-button']")
-    end
 
-    test "erase control clears the focused cell", %{conn: conn, puzzle: puzzle} do
-      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
-
-      # Switch to touch mode so the erase control is rendered.
       view |> element("[data-test='input-mode-toggle']") |> render_click()
 
-      # Focus an editable cell (35 is a non-given in the fixture) and enter a digit.
-      render_hook(view, "cell_focus", %{"position" => "35"})
-      render_hook(view, "cell_entry", %{"position" => "35", "value" => "7"})
-      assert :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(35) == "7"
-
-      # Erase routes a "0" to the focused cell, clearing it.
-      view |> element("[data-test='numpad-erase']") |> render_click()
-
-      assert :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(35) == "0"
+      # Touch mode relies on the native keyboard; the on-screen pad would dock
+      # beneath that keyboard, so it is not rendered.
+      refute has_element?(view, "[data-test='numpad-button']")
     end
   end
 
