@@ -64,6 +64,11 @@ defmodule SudokuRaceWeb.Layouts do
                 Leaderboard
               </.link>
             </li>
+            <li :if={@current_scope.user.is_admin}>
+              <.link navigate={~p"/admin/users"} data-test="nav-admin" class={nav_link_class()}>
+                Admin
+              </.link>
+            </li>
             <li class="hidden px-2 text-gray-500 sm:block" data-test="nav-email">
               {@current_scope.user.email}
             </li>

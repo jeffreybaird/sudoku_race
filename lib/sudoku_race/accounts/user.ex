@@ -5,6 +5,9 @@ defmodule SudokuRace.Accounts.User do
   schema "users" do
     field :email, :string
     field :username, :string
+    # Set only via Accounts.grant_admin_by_email/1 — never cast from user params,
+    # so registration/settings can't escalate privileges.
+    field :is_admin, :boolean, default: false
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime

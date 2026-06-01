@@ -30,6 +30,12 @@ defmodule SudokuRace.AccountsFixtures do
     user
   end
 
+  def admin_fixture(attrs \\ %{}) do
+    user = user_fixture(attrs)
+    {:ok, admin} = Accounts.grant_admin_by_email(user.email)
+    admin
+  end
+
   def user_scope_fixture do
     user = user_fixture()
     user_scope_fixture(user)

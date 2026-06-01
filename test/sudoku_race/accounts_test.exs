@@ -1,7 +1,7 @@
 defmodule SudokuRace.AccountsTest do
   use SudokuRace.DataCase
 
-  doctest SudokuRace.Accounts, only: [sudo_mode?: 2]
+  doctest SudokuRace.Accounts, only: [sudo_mode?: 2, admin?: 1]
 
   alias SudokuRace.Accounts
 
@@ -113,6 +113,91 @@ defmodule SudokuRace.AccountsTest do
       user_fixture(username: "taken_name")
       {:error, changeset} = Accounts.register_user(valid_user_attributes(username: "taken_name"))
       assert "has already been taken" in errors_on(changeset).username
+    end
+
+    test "ignores is_admin in params — registration cannot self-escalate" do
+      {:ok, user} = Accounts.register_user(valid_user_attributes(is_admin: true))
+      refute user.is_admin
+    end
+  end
+
+  describe "privilege escalation guard" do
+    test "no user-facing changeset casts :is_admin" do
+      # The only path to admin is grant_admin_by_email/1; user-controlled params
+      # (registration, settings) must never set it.
+      for changeset <- [
+            User.registration_changeset(%User{}, %{is_admin: true}),
+            User.email_changeset(%User{}, %{is_admin: true}),
+            User.username_changeset(%User{}, %{is_admin: true}),
+            User.password_changeset(%User{}, %{is_admin: true})
+          ] do
+        refute Map.has_key?(changeset.changes, :is_admin)
+      end
+    end
+  end
+
+  describe "grant_admin_by_email/1" do
+    test "grants admin to an existing user" do
+      user = user_fixture()
+      refute user.is_admin
+      assert {:ok, admin} = Accounts.grant_admin_by_email(user.email)
+      assert admin.is_admin
+      assert Accounts.get_user!(user.id).is_admin
+    end
+
+    test "returns :not_found for an unknown email" do
+      assert {:error, :not_found} = Accounts.grant_admin_by_email("nobody@example.com")
+    end
+  end
+
+  describe "list_users/1" do
+    test "returns users and respects pagination" do
+      for _ <- 1..3, do: user_fixture()
+      assert length(Accounts.list_users(page: 1, per_page: 2)) == 2
+    end
+  end
+
+  describe "admin_reset_password/3" do
+    setup do
+      %{admin: admin_fixture(), target: user_fixture(), other: user_fixture()}
+    end
+
+    test "an admin resets a target's password and expires the target's sessions", ctx do
+      target_token = Accounts.generate_user_session_token(ctx.target)
+      admin_token = Accounts.generate_user_session_token(ctx.admin)
+
+      assert {:ok, {user, _expired}} =
+               Accounts.admin_reset_password(ctx.admin.id, ctx.target.id, %{
+                 password: "brand new password"
+               })
+
+      assert user.id == ctx.target.id
+      assert Accounts.get_user_by_email_and_password(ctx.target.email, "brand new password")
+      # Target logged out everywhere; the admin's own session survives.
+      refute Accounts.get_user_by_session_token(target_token)
+      assert Accounts.get_user_by_session_token(admin_token)
+    end
+
+    test "a non-admin actor is unauthorized", ctx do
+      assert {:error, :unauthorized} =
+               Accounts.admin_reset_password(ctx.other.id, ctx.target.id, %{
+                 password: "brand new password"
+               })
+
+      # Target password unchanged.
+      assert Accounts.get_user_by_email_and_password(ctx.target.email, valid_user_password())
+    end
+
+    test "returns :not_found for an unknown target", ctx do
+      assert {:error, :not_found} =
+               Accounts.admin_reset_password(ctx.admin.id, 999_999_999, %{password: "whatever123"})
+    end
+
+    test "returns :validation for an invalid password", ctx do
+      assert {:error, :validation, changeset} =
+               Accounts.admin_reset_password(ctx.admin.id, ctx.target.id, %{password: "short"})
+
+      assert %{password: ["should be at least 12 character(s)"]} = errors_on(changeset)
     end
   end
 

@@ -92,6 +92,102 @@ defmodule SudokuRace.Accounts do
     |> Repo.insert()
   end
 
+  ## Admin
+
+  @doc """
+  Returns true if the user has the admin role.
+
+  ## Examples
+
+      iex> SudokuRace.Accounts.admin?(%SudokuRace.Accounts.User{is_admin: true})
+      true
+
+      iex> SudokuRace.Accounts.admin?(%SudokuRace.Accounts.User{is_admin: false})
+      false
+
+      iex> SudokuRace.Accounts.admin?(nil)
+      false
+
+  """
+  def admin?(%User{is_admin: true}), do: true
+  def admin?(_user), do: false
+
+  @doc """
+  Grants the admin role to the user with the given email.
+
+  Returns `{:ok, user}` or `{:error, :not_found}`. Used by the
+  `mix sudoku_race.grant_admin` task (dev) and `SudokuRace.Release.grant_admin/1`
+  (prod, via `bin/sudoku_race eval`).
+  """
+  def grant_admin_by_email(email) when is_binary(email) do
+    case get_user_by_email(email) do
+      nil ->
+        {:error, :not_found}
+
+      user ->
+        user
+        |> Ecto.Changeset.change(is_admin: true)
+        |> Repo.update()
+    end
+  end
+
+  @doc """
+  Returns a paginated list of all users (admin user management).
+
+  ## Options
+
+    * `:page` — 1-based page (default: 1)
+    * `:per_page` — results per page, capped at 100 (default: 20)
+  """
+  def list_users(opts \\ []) do
+    page = Keyword.get(opts, :page, 1)
+    per_page = opts |> Keyword.get(:per_page, 20) |> min(100)
+    offset = (page - 1) * per_page
+
+    User
+    |> order_by([u], asc: u.email)
+    |> limit(^per_page)
+    |> offset(^offset)
+    |> Repo.all()
+  end
+
+  @doc """
+  Resets `target_user_id`'s password on behalf of an admin.
+
+  The acting user's admin status is re-checked against the database (by id), so
+  a stale or forged scope cannot authorize the change. On success the target's
+  existing sessions are expired (they are logged out everywhere); the admin's own
+  session is unaffected.
+
+  Returns `{:ok, {user, expired_tokens}}`.
+  Returns `{:error, :unauthorized}` if the acting user is not (or is no longer) an admin.
+  Returns `{:error, :not_found}` if the target user does not exist.
+  Returns `{:error, :validation, changeset}` if the new password is invalid.
+  """
+  def admin_reset_password(acting_user_id, target_user_id, attrs) do
+    with {:ok, _admin} <- require_admin(acting_user_id),
+         {:ok, target} <- fetch_user(target_user_id) do
+      case update_user_password(target, attrs) do
+        {:ok, result} -> {:ok, result}
+        {:error, %Ecto.Changeset{} = changeset} -> {:error, :validation, changeset}
+      end
+    end
+  end
+
+  defp require_admin(user_id) do
+    case Repo.get(User, user_id) do
+      %User{is_admin: true} = admin -> {:ok, admin}
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp fetch_user(user_id) do
+    case Repo.get(User, user_id) do
+      nil -> {:error, :not_found}
+      user -> {:ok, user}
+    end
+  end
+
   ## Settings
 
   @doc """

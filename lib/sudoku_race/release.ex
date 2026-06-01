@@ -29,6 +29,28 @@ defmodule SudokuRace.Release do
   end
 
   @doc """
+  Grants the admin role to the user with the given email. This is the prod path
+  for creating an admin (releases have no Mix):
+
+      bin/sudoku_race eval 'SudokuRace.Release.grant_admin("admin@example.com")'
+  """
+  def grant_admin(email) when is_binary(email) do
+    load_app()
+
+    {:ok, result, _} =
+      Ecto.Migrator.with_repo(SudokuRace.Repo, fn _repo ->
+        SudokuRace.Accounts.grant_admin_by_email(email)
+      end)
+
+    case result do
+      {:ok, user} -> IO.puts("Granted admin to #{user.email}")
+      {:error, :not_found} -> IO.puts("No user found with email #{email}")
+    end
+
+    result
+  end
+
+  @doc """
   Seeds the puzzle pool from `data/sudoku.csv`.
 
   Streams the CSV without loading it all into memory. Samples up to

@@ -64,6 +64,17 @@ defmodule SudokuRaceWeb.Router do
       live "/leaderboard", LeaderboardLive.Index, :index
     end
 
+    # Admin user management — gated by admin role AND recent re-auth (sudo),
+    # since resetting another user's password is the most sensitive action.
+    live_session :require_admin,
+      on_mount: [
+        {SudokuRaceWeb.UserAuth, :require_authenticated},
+        {SudokuRaceWeb.UserAuth, :require_admin},
+        {SudokuRaceWeb.UserAuth, :require_sudo_mode}
+      ] do
+      live "/admin/users", AdminLive.Users, :index
+    end
+
     post "/users/update-password", UserSessionController, :update_password
   end
 
