@@ -666,6 +666,70 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Mobile touch entry — native numeric keyboard + usable on-screen number pad
+  # ---------------------------------------------------------------------------
+  describe "mobile touch entry" do
+    setup :register_and_log_in_user
+
+    setup %{scope: scope} do
+      puzzle = puzzle_fixture_secure()
+      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, puzzle: puzzle, attempt: attempt}
+    end
+
+    test "grid exposes the current input mode for the touch hook", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assert has_element?(view, "[data-test='sudoku-grid'][data-input-mode='pointer']")
+
+      view |> element("[data-test='input-mode-toggle']") |> render_click()
+
+      assert has_element?(view, "[data-test='sudoku-grid'][data-input-mode='touch']")
+    end
+
+    test "a numeric soft-keyboard entry input is rendered for mobile taps", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assert has_element?(view, "[data-test='mobile-entry'][inputmode='numeric']")
+    end
+
+    test "touch mode shows a dialpad with an erase control", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      # Pointer mode (default) has no erase control.
+      refute has_element?(view, "[data-test='numpad-erase']")
+
+      view |> element("[data-test='input-mode-toggle']") |> render_click()
+
+      assert has_element?(view, "[data-test='numpad-erase']")
+      assert has_element?(view, "[data-test='numpad-button']")
+    end
+
+    test "erase control clears the focused cell", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      # Switch to touch mode so the erase control is rendered.
+      view |> element("[data-test='input-mode-toggle']") |> render_click()
+
+      # Focus an editable cell (35 is a non-given in the fixture) and enter a digit.
+      render_hook(view, "cell_focus", %{"position" => "35"})
+      render_hook(view, "cell_entry", %{"position" => "35", "value" => "7"})
+      assert :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(35) == "7"
+
+      # Erase routes a "0" to the focused cell, clearing it.
+      view |> element("[data-test='numpad-erase']") |> render_click()
+
+      assert :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(35) == "0"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # O2 — cell_entry on a GIVEN cell is a no-op
   # ---------------------------------------------------------------------------
   describe "cell_entry on a given (clue) cell" do

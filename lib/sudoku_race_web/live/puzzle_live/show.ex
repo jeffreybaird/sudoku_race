@@ -29,8 +29,10 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   ## JS hooks
 
   Three thin hooks (no game logic):
-  - `.GridKeyboard` — routes keyboard input (arrow keys, digits, backspace) as
-    `cell_focus` and `cell_entry` events to the server.
+  - `.GridKeyboard` — routes grid input as `cell_focus`/`cell_entry` events:
+    physical keyboard (arrows, digits, backspace), and on touch a cell tap that
+    focuses the hidden `#mobile-entry` input to summon the native numeric
+    keyboard, routing the typed digit to the tapped cell.
   - `.Timer` — renders the ticking elapsed display using `accumulated_seconds` +
     `segment_started_at` data attributes pushed via `push_event/3` on every
     transition to `:in_progress` (both mount and resume).
@@ -427,6 +429,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               role="grid"
               aria-label="Sudoku puzzle"
               data-test="sudoku-grid"
+              data-input-mode={to_string(@input_mode)}
               phx-hook=".GridKeyboard"
               class="grid grid-cols-9 border-2 border-gray-800 rounded-sm select-none"
             >
@@ -478,26 +481,50 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               <% end %>
             </div>
 
-            <%!-- Number pad (touch mode) --%>
+            <%!-- Hidden input; the GridKeyboard hook focuses it on a touch tap to summon the native numeric keyboard, routing the typed digit to cell_entry. --%>
+            <input
+              id="mobile-entry"
+              data-test="mobile-entry"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              aria-hidden="true"
+              tabindex="-1"
+              class="fixed left-0 top-0 h-px w-px opacity-0"
+            />
+
+            <%!-- Number pad. Touch: a 3-column dialpad that fits narrow phones with 44px+ targets. Pointer: a compact row, since typing is primary on desktop. --%>
             <%= if @input_mode == :touch do %>
-              <div class="mt-4 grid grid-cols-9 gap-1" aria-label="Number pad">
-                <%= for digit <- 1..9 do %>
+              <div class="mt-4" aria-label="Number pad">
+                <div class="mx-auto grid max-w-xs grid-cols-3 gap-2">
+                  <%= for digit <- 1..9 do %>
+                    <button
+                      type="button"
+                      data-test="numpad-button"
+                      phx-click="cell_entry"
+                      phx-value-position={@focused_cell}
+                      phx-value-value={Integer.to_string(digit)}
+                      class="flex h-14 min-h-[44px] items-center justify-center rounded-lg bg-gray-100 text-xl font-semibold text-gray-800 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                      aria-label={"Enter #{digit}"}
+                    >
+                      {digit}
+                    </button>
+                  <% end %>
                   <button
                     type="button"
-                    data-test="numpad-button"
+                    data-test="numpad-erase"
                     phx-click="cell_entry"
                     phx-value-position={@focused_cell}
-                    phx-value-value={Integer.to_string(digit)}
-                    class="flex items-center justify-center h-11 w-full rounded-lg bg-gray-100 text-base font-semibold text-gray-800 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                    aria-label={"Enter #{digit}"}
-                    style="min-height: 44px; min-width: 44px;"
+                    phx-value-value="0"
+                    class="col-span-3 flex h-12 min-h-[44px] items-center justify-center rounded-lg bg-gray-100 text-base font-medium text-gray-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                    aria-label="Erase cell"
                   >
-                    {digit}
+                    Erase
                   </button>
-                <% end %>
+                </div>
               </div>
             <% else %>
-              <%!-- Pointer mode: show number pad for visibility but smaller --%>
+              <%!-- Pointer mode: typing is primary; offer a compact tappable row too --%>
               <div class="mt-4 grid grid-cols-9 gap-1" aria-label="Number pad">
                 <%= for digit <- 1..9 do %>
                   <button
@@ -506,9 +533,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                     phx-click="cell_entry"
                     phx-value-position={@focused_cell}
                     phx-value-value={Integer.to_string(digit)}
-                    class="flex items-center justify-center h-11 w-full rounded-lg bg-gray-100 text-sm font-semibold text-gray-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+                    class="flex h-11 min-h-[44px] w-full items-center justify-center rounded-lg bg-gray-100 text-sm font-semibold text-gray-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
                     aria-label={"Enter #{digit}"}
-                    style="min-height: 44px; min-width: 44px;"
                   >
                     {digit}
                   </button>
@@ -633,21 +659,25 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     </script>
 
     <%!--
-      .GridKeyboard hook: routes keyboard events from the focused grid cell to
-      server-side cell_focus and cell_entry handlers. No validation logic here.
+      .GridKeyboard hook: routes input from the grid to server-side cell_focus
+      and cell_entry handlers. Three thin sources, no validation logic:
+        - physical keyboard (arrows, digits, backspace) on the focused cell;
+        - touch tap, which focuses the hidden #mobile-entry input within the
+          gesture so the device's native numeric keyboard appears;
+        - that hidden input's typed digit, routed to the tapped cell.
     --%>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".GridKeyboard">
       export default {
         mounted() {
+          this.entryPos = null;
+          this.entryInput = document.getElementById("mobile-entry");
+
           this.el.addEventListener("keydown", (e) => {
             const active = document.activeElement;
             const pos = active && active.dataset.position !== undefined
               ? parseInt(active.dataset.position, 10)
               : null;
             if (pos === null) return;
-
-            const row = Math.floor(pos / 9);
-            const col = pos % 9;
 
             const arrowMoves = {
               ArrowUp: pos - 9,
@@ -668,6 +698,34 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               this.pushEvent("cell_entry", { position: pos, value: "0" });
             }
           });
+
+          // Touch: tapping an editable cell summons the native numeric keyboard
+          // by focusing the hidden input inside the user gesture.
+          this.el.addEventListener("click", (e) => {
+            if (this.el.dataset.inputMode !== "touch" || !this.entryInput) return;
+            const cell = e.target.closest("[data-position]");
+            if (!cell || cell.getAttribute("aria-readonly") === "true") return;
+            this.entryPos = parseInt(cell.dataset.position, 10);
+            this.entryInput.value = "";
+            this.entryInput.focus();
+          });
+
+          if (this.entryInput) {
+            this.entryInput.addEventListener("input", () => {
+              if (this.entryPos === null) return;
+              const digit = this.entryInput.value.slice(-1);
+              this.entryInput.value = "";
+              if (digit >= "1" && digit <= "9") {
+                this.pushEvent("cell_entry", { position: this.entryPos, value: digit });
+              }
+            });
+            this.entryInput.addEventListener("keydown", (e) => {
+              if (this.entryPos === null) return;
+              if (e.key === "Backspace" || e.key === "Delete") {
+                this.pushEvent("cell_entry", { position: this.entryPos, value: "0" });
+              }
+            });
+          }
         }
       }
     </script>
