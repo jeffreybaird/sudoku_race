@@ -669,6 +669,31 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
             }
           });
 
+          // Keep the active cell visible above the on-screen keyboard. The
+          // focused element is the off-screen #mobile-entry input, so the
+          // browser won't scroll the board for us — nudge it ourselves using
+          // the visual viewport (which shrinks when the keyboard is shown).
+          this.scrollActiveCellIntoView = () => {
+            if (this.entryPos === null) return;
+            const cell = this.el.querySelector('[data-position="' + this.entryPos + '"]');
+            if (!cell) return;
+            const vv = window.visualViewport;
+            const rect = cell.getBoundingClientRect();
+            const margin = 24;
+            if (vv) {
+              const visibleBottom = vv.offsetTop + vv.height;
+              const overlap = rect.bottom - visibleBottom + margin;
+              if (overlap > 0) window.scrollBy({ top: overlap, behavior: "smooth" });
+            } else {
+              cell.scrollIntoView({ block: "center", behavior: "smooth" });
+            }
+          };
+
+          if (window.visualViewport) {
+            this.onViewportResize = () => this.scrollActiveCellIntoView();
+            window.visualViewport.addEventListener("resize", this.onViewportResize);
+          }
+
           // Touch: tapping an editable cell summons the native numeric keyboard
           // by focusing the hidden input inside the user gesture.
           this.el.addEventListener("click", (e) => {
@@ -678,6 +703,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
             this.entryPos = parseInt(cell.dataset.position, 10);
             this.entryInput.value = "";
             this.entryInput.focus();
+            // The keyboard animates in; nudge the cell above it once shown.
+            setTimeout(() => this.scrollActiveCellIntoView(), 300);
           });
 
           if (this.entryInput) {
@@ -695,6 +722,11 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                 this.pushEvent("cell_entry", { position: this.entryPos, value: "0" });
               }
             });
+          }
+        },
+        destroyed() {
+          if (window.visualViewport && this.onViewportResize) {
+            window.visualViewport.removeEventListener("resize", this.onViewportResize);
           }
         }
       }
