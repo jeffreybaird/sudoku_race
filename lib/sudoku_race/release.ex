@@ -51,7 +51,7 @@ defmodule SudokuRace.Release do
   end
 
   @doc """
-  Seeds the puzzle pool from the bundled `priv/data/puzzles.csv`.
+  Seeds the puzzle pool from the bundled `priv/data/sudoku.csv`.
 
   Streams the CSV without loading it all into memory. Samples up to
   `@puzzles_per_band` puzzles per difficulty band (~#{@puzzles_per_band * 3}
@@ -119,16 +119,16 @@ defmodule SudokuRace.Release do
   end
 
   defp do_seed_puzzles do
-    # Bundled in the release at priv/data/puzzles.csv (shipped via the
-    # Dockerfile's `COPY priv priv`); falls back to data/puzzles.csv in dev.
-    csv_path = Application.app_dir(:sudoku_race, "priv/data/puzzles.csv")
-    alt_path = Path.join(File.cwd!(), "data/puzzles.csv")
+    # Bundled in the release at priv/data/sudoku.csv (shipped via the
+    # Dockerfile's `COPY priv priv`); falls back to data/sudoku.csv in dev.
+    csv_path = Application.app_dir(:sudoku_race, "priv/data/sudoku.csv")
+    alt_path = Path.join(File.cwd!(), "data/sudoku.csv")
 
     path =
       cond do
         File.exists?(csv_path) -> csv_path
         File.exists?(alt_path) -> alt_path
-        true -> raise "puzzles.csv not found at #{csv_path} or #{alt_path}"
+        true -> raise "sudoku.csv not found at #{csv_path} or #{alt_path}"
       end
 
     {inserted, _} = seed_puzzles_from_csv(path)
