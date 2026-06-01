@@ -192,7 +192,20 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     # Only allow entry on non-given cells
     if clue_at_pos == "0" do
       new_grid = List.replace_at(grid, pos, value)
-      {:noreply, assign(socket, :grid, new_grid)}
+      socket = assign(socket, :grid, new_grid)
+
+      # Persist the server-derived board so progress survives reconnect/deploy.
+      socket =
+        case Attempts.save_entries(
+               socket.assigns.current_scope,
+               socket.assigns.attempt,
+               Enum.join(new_grid)
+             ) do
+          {:ok, attempt} -> assign(socket, :attempt, attempt)
+          {:error, _reason} -> socket
+        end
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -719,16 +732,18 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     end
   end
 
-  defp state_from_attempt(%{status: :in_progress}, clues) do
-    {:playing, build_grid(clues), first_editable_index(clues)}
+  # Restore the saved board (entries) so refreshes/deploys keep progress; fall
+  # back to clues for attempts started before entries were persisted.
+  defp state_from_attempt(%{status: :in_progress} = attempt, clues) do
+    {:playing, build_grid(attempt.entries || clues), first_editable_index(clues)}
   end
 
-  defp state_from_attempt(%{status: :paused} = _attempt, clues) do
-    {:paused, build_grid(clues), first_editable_index(clues)}
+  defp state_from_attempt(%{status: :paused} = attempt, clues) do
+    {:paused, build_grid(attempt.entries || clues), first_editable_index(clues)}
   end
 
-  defp state_from_attempt(%{status: :completed} = _attempt, clues) do
-    {:completed, build_grid(clues), nil}
+  defp state_from_attempt(%{status: :completed} = attempt, clues) do
+    {:completed, build_grid(attempt.entries || clues), nil}
   end
 
   # Build the grid as a list of 81 strings.

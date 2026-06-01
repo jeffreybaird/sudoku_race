@@ -32,6 +32,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
      |> assign(:page, 1)
      |> assign(:per_page, @per_page)
      |> assign(:friend_ids, friend_ids)
+     |> assign(:in_progress_attempts, Attempts.list_in_progress_attempts(scope, per_page: 100))
      |> load_puzzles()}
   end
 
@@ -173,6 +174,53 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="mx-auto max-w-4xl px-4 py-8">
         <h1 class="text-2xl font-bold text-gray-900 mb-6">Puzzles</h1>
+
+        <%!-- In-progress attempts pinned at the top --%>
+        <section
+          :if={@in_progress_attempts != []}
+          data-test="in-progress-section"
+          aria-labelledby="in-progress-heading"
+          class="mb-6"
+        >
+          <h2 id="in-progress-heading" class="text-lg font-semibold text-gray-900 mb-3">
+            In progress
+          </h2>
+          <ol class="divide-y divide-gray-200 rounded-lg border border-amber-200 bg-amber-50 shadow-sm">
+            <li
+              :for={attempt <- @in_progress_attempts}
+              data-test="in-progress-row"
+              class="flex items-center justify-between px-6 py-4"
+            >
+              <div class="flex items-center gap-4">
+                <span
+                  data-test="in-progress-label"
+                  class="inline-flex items-center rounded-full bg-amber-200 px-2.5 py-0.5 text-xs font-medium text-amber-900"
+                >
+                  {status_label(attempt.status)}
+                </span>
+                <span
+                  data-test={"difficulty-#{attempt.puzzle.difficulty}"}
+                  class={[
+                    "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+                    difficulty_badge_class(attempt.puzzle.difficulty)
+                  ]}
+                >
+                  {attempt.puzzle.difficulty}
+                </span>
+                <span class="text-sm text-gray-500">
+                  {attempt.puzzle.givens_count} givens
+                </span>
+              </div>
+              <.link
+                navigate={~p"/puzzles/#{attempt.puzzle.id}"}
+                class="text-sm font-medium text-amber-700 hover:underline"
+                data-test="resume-link"
+              >
+                Resume
+              </.link>
+            </li>
+          </ol>
+        </section>
 
         <%!-- Difficulty filter controls --%>
         <nav aria-label="Filter puzzles by difficulty" class="mb-4 flex gap-2">
@@ -425,6 +473,9 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
     </Layouts.app>
     """
   end
+
+  defp status_label(:in_progress), do: "In progress"
+  defp status_label(:paused), do: "Paused"
 
   defp difficulty_badge_class(:easy), do: "bg-green-100 text-green-800"
   defp difficulty_badge_class(:medium), do: "bg-yellow-100 text-yellow-800"

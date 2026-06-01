@@ -172,6 +172,36 @@ defmodule SudokuRace.Attempts do
   end
 
   # ---------------------------------------------------------------------------
+  # save_entries/3
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Persists the current board for an in-progress attempt so play survives a
+  reconnect or deploy (the grid otherwise lives only in LiveView memory).
+
+  `entries` is the 81-char board string (server-derived; givens preserved by the
+  caller, blanks as "0"). Only the owner may save, and only while in progress.
+
+  Returns `{:ok, attempt}`.
+  Returns `{:error, :not_in_progress}` if the attempt is paused or completed.
+  Returns `{:error, :forbidden}` if the scope user does not own the attempt.
+  Returns `{:error, :not_found}` if the attempt does not exist.
+  """
+  @spec save_entries(Scope.t(), Attempt.t() | integer() | String.t(), String.t()) ::
+          {:ok, Attempt.t()}
+          | {:error, :not_in_progress}
+          | {:error, :forbidden}
+          | {:error, :not_found}
+  def save_entries(%Scope{} = scope, attempt_or_id, entries) when is_binary(entries) do
+    with {:ok, attempt} <- load_and_authorize(scope, attempt_or_id),
+         :ok <- require_status(attempt, :in_progress, :not_in_progress) do
+      attempt
+      |> Attempt.update_changeset(%{entries: entries})
+      |> Repo.update()
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # submit_attempt/3
   # ---------------------------------------------------------------------------
 
@@ -483,6 +513,37 @@ defmodule SudokuRace.Attempts do
     |> order_by([a], desc: a.id)
     |> limit(^per_page)
     |> offset(^offset)
+    |> Repo.all()
+  end
+
+  # ---------------------------------------------------------------------------
+  # list_in_progress_attempts/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the scoped user's unfinished attempts — `:in_progress` and `:paused`,
+  most recently updated first — with the `:puzzle` association preloaded.
+
+  Backs the "In progress" section at the top of the puzzle list. Completed
+  attempts are excluded.
+
+  ## Options
+
+  - `:page`     — 1-based page number (default: 1)
+  - `:per_page` — results per page, capped at #{@max_per_page} (default: #{@default_per_page})
+  """
+  @spec list_in_progress_attempts(Scope.t(), keyword()) :: [Attempt.t()]
+  def list_in_progress_attempts(%Scope{} = scope, opts \\ []) do
+    page = Keyword.get(opts, :page, 1)
+    per_page = opts |> Keyword.get(:per_page, @default_per_page) |> min(@max_per_page)
+    offset = (page - 1) * per_page
+
+    Attempt
+    |> where([a], a.user_id == ^scope.user.id and a.status in [:in_progress, :paused])
+    |> order_by([a], desc: a.updated_at, desc: a.id)
+    |> limit(^per_page)
+    |> offset(^offset)
+    |> preload(:puzzle)
     |> Repo.all()
   end
 

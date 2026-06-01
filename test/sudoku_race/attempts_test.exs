@@ -1035,4 +1035,82 @@ defmodule SudokuRace.AttemptsTest do
       refute Map.has_key?(result, other.id)
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # save_entries/3
+  # ---------------------------------------------------------------------------
+  describe "save_entries/3" do
+    setup do
+      scope = user_scope_fixture()
+      {:ok, attempt} = Attempts.start_attempt(scope, easy_puzzle_fixture())
+      {:ok, scope: scope, attempt: attempt}
+    end
+
+    test "persists the board for the owner while in progress", ctx do
+      board = String.duplicate("1", 40) <> String.duplicate("0", 41)
+      assert {:ok, saved} = Attempts.save_entries(ctx.scope, ctx.attempt, board)
+      assert saved.entries == board
+
+      assert Attempts.get_attempt(ctx.scope, ctx.attempt.id) |> elem(1) |> Map.get(:entries) ==
+               board
+    end
+
+    test "returns :forbidden for a non-owner", ctx do
+      other = user_scope_fixture()
+
+      assert {:error, :forbidden} =
+               Attempts.save_entries(other, ctx.attempt, String.duplicate("0", 81))
+    end
+
+    test "returns :not_in_progress when the attempt is paused", ctx do
+      {:ok, paused} = Attempts.pause_attempt(ctx.scope, ctx.attempt)
+
+      assert {:error, :not_in_progress} =
+               Attempts.save_entries(ctx.scope, paused, String.duplicate("0", 81))
+    end
+
+    test "returns :not_found for an unknown id", ctx do
+      assert {:error, :not_found} =
+               Attempts.save_entries(ctx.scope, 999_999_999, String.duplicate("0", 81))
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # list_in_progress_attempts/2
+  # ---------------------------------------------------------------------------
+  describe "list_in_progress_attempts/2" do
+    setup do
+      %{scope: user_scope_fixture(user_fixture())}
+    end
+
+    test "returns in_progress and paused attempts (puzzle preloaded), excludes completed", ctx do
+      sol = String.duplicate("9", 81)
+      ip = easy_puzzle_fixture(%{solution: sol})
+      paused = medium_puzzle_fixture(%{solution: sol})
+      done = hard_puzzle_fixture(%{solution: sol})
+
+      {:ok, _} = Attempts.start_attempt(ctx.scope, ip)
+      {:ok, p} = Attempts.start_attempt(ctx.scope, paused)
+      {:ok, _} = Attempts.pause_attempt(ctx.scope, p)
+      complete(ctx.scope, done)
+
+      results = Attempts.list_in_progress_attempts(ctx.scope)
+      puzzle_ids = Enum.map(results, & &1.puzzle.id)
+
+      assert ip.id in puzzle_ids
+      assert paused.id in puzzle_ids
+      refute done.id in puzzle_ids
+      assert Enum.sort(Enum.map(results, & &1.status)) == [:in_progress, :paused]
+      assert %SudokuRace.Puzzles.Puzzle{} = hd(results).puzzle
+    end
+
+    test "is scoped to the user", ctx do
+      other = user_scope_fixture(user_fixture())
+
+      {:ok, _} =
+        Attempts.start_attempt(other, easy_puzzle_fixture(%{solution: String.duplicate("9", 81)}))
+
+      assert Attempts.list_in_progress_attempts(ctx.scope) == []
+    end
+  end
 end

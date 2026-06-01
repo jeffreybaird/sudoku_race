@@ -190,8 +190,21 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       html = render(view)
       # The cell at position 35 should now show "5"
       assert html =~ ~s(value 5)
-      # Attempt in DB must remain in_progress (grid state is in assigns, not DB)
+      # Attempt stays in_progress; the board is also persisted (see restore test).
       assert attempt.status == :in_progress
+    end
+
+    test "entered digits survive a fresh mount (reconnect/deploy restore)", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "7"})
+
+      # A brand-new mount (as happens when the app restarts on deploy) must
+      # restore the board from the persisted attempt, not blank it from clues.
+      {:ok, _view2, html2} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      assert html2 =~ ~s(value 7)
     end
 
     test "clearing a cell via cell_entry with '0' makes it empty", %{conn: conn, puzzle: puzzle} do

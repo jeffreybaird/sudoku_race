@@ -221,7 +221,7 @@ defmodule SudokuRaceWeb.PuzzleLive.IndexTest do
     end
 
     defp complete_puzzle(scope, puzzle) do
-      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, attempt} = SudokuRace.Attempts.start_attempt(scope, puzzle)
       {:ok, _} = Attempts.submit_attempt(scope, attempt, String.duplicate("9", 81))
     end
 
@@ -399,6 +399,39 @@ defmodule SudokuRaceWeb.PuzzleLive.IndexTest do
 
       assert html =~ ~s(id="puzzles-#{easy_puzzle.id}")
       refute html =~ ~s(id="puzzles-#{hard_puzzle.id}")
+    end
+  end
+
+  describe "in-progress section" do
+    setup :register_and_log_in_user
+
+    test "shows in-progress puzzles at the top, labeled, with a resume link", %{
+      conn: conn,
+      scope: scope
+    } do
+      puzzle = unique_puzzle()
+      {:ok, _attempt} = SudokuRace.Attempts.start_attempt(scope, puzzle)
+
+      {:ok, view, _html} = live(conn, ~p"/puzzles")
+
+      assert has_element?(view, "[data-test='in-progress-section']")
+      assert view |> element("[data-test='in-progress-label']") |> render() =~ "In progress"
+      assert has_element?(view, "[data-test='resume-link']")
+    end
+
+    test "labels paused attempts as Paused", %{conn: conn, scope: scope} do
+      puzzle = unique_puzzle()
+      {:ok, attempt} = SudokuRace.Attempts.start_attempt(scope, puzzle)
+      {:ok, _} = SudokuRace.Attempts.pause_attempt(scope, attempt)
+
+      {:ok, view, _html} = live(conn, ~p"/puzzles")
+
+      assert view |> element("[data-test='in-progress-label']") |> render() =~ "Paused"
+    end
+
+    test "no section when there are no in-progress attempts", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles")
+      refute has_element?(view, "[data-test='in-progress-section']")
     end
   end
 

@@ -32,6 +32,9 @@ defmodule SudokuRace.Attempts.Attempt do
     field :segment_started_at, :utc_datetime_usec
     field :completed_at, :utc_datetime_usec
     field :elapsed_seconds, :integer
+    # Current board (81-char string, "0" = blank); persisted as the user plays
+    # so progress survives reconnects/deploys.
+    field :entries, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -60,7 +63,8 @@ defmodule SudokuRace.Attempts.Attempt do
       :accumulated_seconds,
       :segment_started_at,
       :completed_at,
-      :elapsed_seconds
+      :elapsed_seconds,
+      :entries
     ])
     |> validate_required([:status])
     |> validate_inclusion(:status, @valid_statuses)
