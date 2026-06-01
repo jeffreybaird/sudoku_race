@@ -19,6 +19,7 @@ defmodule SudokuRaceWeb.FriendLive.Index do
     {:ok,
      socket
      |> assign(:email_error, nil)
+     |> assign(:user_query, "")
      |> assign_form()
      |> load_social()}
   end
@@ -43,6 +44,31 @@ defmodule SudokuRaceWeb.FriendLive.Index do
 
       {:error, reason} ->
         {:noreply, assign(socket, :email_error, send_error_message(reason))}
+    end
+  end
+
+  @impl true
+  def handle_event("search_users", %{"query" => query}, socket) do
+    {:noreply,
+     socket
+     |> assign(:user_query, query)
+     |> load_found_users()}
+  end
+
+  @impl true
+  def handle_event("add_friend", %{"id" => id}, socket) do
+    case Social.send_friend_request(socket.assigns.current_scope, String.to_integer(id)) do
+      {:ok, _friendship} ->
+        {:noreply, socket |> put_flash(:info, "Friend request sent.") |> load_social()}
+
+      {:error, :request_exists, _request_id} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "They already sent you a request — accept it below.")
+         |> load_social()}
+
+      {:error, reason} ->
+        {:noreply, socket |> put_flash(:error, send_error_message(reason)) |> load_social()}
     end
   end
 
@@ -86,6 +112,19 @@ defmodule SudokuRaceWeb.FriendLive.Index do
     socket
     |> assign(:friends, Social.list_friends(scope, per_page: @per_page))
     |> assign(:pending_requests, Social.list_pending_requests(scope, per_page: @per_page))
+    |> load_found_users()
+  end
+
+  # Browse (blank query) or username search; reflects the latest friendships so
+  # newly-added people drop out of the results.
+  defp load_found_users(socket) do
+    found =
+      Social.search_users(socket.assigns.current_scope,
+        query: socket.assigns.user_query,
+        per_page: @per_page
+      )
+
+    assign(socket, :found_users, found)
   end
 
   defp assign_form(socket) do
@@ -155,6 +194,59 @@ defmodule SudokuRaceWeb.FriendLive.Index do
           </.form>
         </section>
 
+        <%!-- Browse / search users to add --%>
+        <section aria-labelledby="find-people-heading" class="mb-8">
+          <h2 id="find-people-heading" class="text-lg font-semibold text-gray-900 mb-3">
+            Find people
+          </h2>
+          <form phx-change="search_users" class="mb-3" data-test="user-search-form">
+            <label for="user-search" class="sr-only">Search by username</label>
+            <input
+              type="text"
+              id="user-search"
+              name="query"
+              value={@user_query}
+              data-test="user-search-input"
+              placeholder="Search by username…"
+              phx-debounce="200"
+              autocomplete="off"
+              class="block w-full min-h-[44px] rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            />
+          </form>
+          <div
+            data-test="user-results"
+            aria-live="polite"
+            class="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white shadow-sm"
+          >
+            <p
+              :if={@found_users == []}
+              data-test="no-users-found"
+              class="px-6 py-8 text-center text-gray-500"
+            >
+              No users found.
+            </p>
+            <div
+              :for={user <- @found_users}
+              data-test="user-result-row"
+              class="flex items-center justify-between px-6 py-4"
+            >
+              <span class="text-sm text-gray-900" data-test="user-result-name">
+                {user.username || user.email}
+              </span>
+              <button
+                type="button"
+                data-test="add-friend-button"
+                phx-click="add_friend"
+                phx-value-id={user.id}
+                class="min-h-[44px] rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                aria-label={"Add #{user.username || user.email} as a friend"}
+              >
+                Add friend
+              </button>
+            </div>
+          </div>
+        </section>
+
         <%!-- Incoming pending requests --%>
         <section aria-labelledby="requests-heading" class="mb-8">
           <h2 id="requests-heading" class="text-lg font-semibold text-gray-900 mb-3">
@@ -178,7 +270,7 @@ defmodule SudokuRaceWeb.FriendLive.Index do
               class="flex items-center justify-between px-6 py-4"
             >
               <span class="text-sm text-gray-900" data-test="requester-email">
-                {request.requester.email}
+                {request.requester.username || request.requester.email}
               </span>
               <div class="flex gap-2">
                 <button
@@ -228,7 +320,7 @@ defmodule SudokuRaceWeb.FriendLive.Index do
               class="flex items-center px-6 py-4"
             >
               <span class="text-sm text-gray-900" data-test="friend-email">
-                {friend.email}
+                {friend.username || friend.email}
               </span>
             </div>
           </div>

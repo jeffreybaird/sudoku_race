@@ -216,4 +216,55 @@ defmodule SudokuRaceWeb.FriendLive.IndexTest do
       assert html =~ "You are not allowed to do that."
     end
   end
+
+  describe "find people (browse + search)" do
+    setup :register_and_log_in_user
+
+    test "browse lists other addable users by name", %{conn: conn} do
+      other = user_fixture(%{username: "findable_user"})
+      {:ok, view, _html} = live(conn, ~p"/friends")
+
+      assert has_element?(view, "[data-test='user-result-row']")
+      assert view |> element("[data-test='user-results']") |> render() =~ "findable_user"
+      refute has_element?(view, "[data-test='no-users-found']")
+      _ = other
+    end
+
+    test "search filters by username", %{conn: conn} do
+      _match = user_fixture(%{username: "zorro_masked"})
+      _miss = user_fixture(%{username: "ordinary_joe"})
+      {:ok, view, _html} = live(conn, ~p"/friends")
+
+      view
+      |> form("[data-test='user-search-form']", %{"query" => "zorro"})
+      |> render_change()
+
+      results = view |> element("[data-test='user-results']") |> render()
+      assert results =~ "zorro_masked"
+      refute results =~ "ordinary_joe"
+    end
+
+    test "adding a user sends a request and removes them from results", %{conn: conn} do
+      other = user_fixture(%{username: "future_friend"})
+      {:ok, view, _html} = live(conn, ~p"/friends")
+
+      html =
+        view
+        |> element("[data-test='add-friend-button'][phx-value-id='#{other.id}']")
+        |> render_click()
+
+      assert html =~ "Friend request sent."
+      # No longer addable (pending), so it drops out of the results.
+      refute render(view) =~ "future_friend"
+    end
+
+    test "existing friends do not appear in browse", %{conn: conn, user: me} do
+      friend = user_fixture(%{username: "already_pals"})
+      accepted_friendship_fixture(me, friend)
+      {:ok, view, _html} = live(conn, ~p"/friends")
+
+      # Not in the search results (they do show in the "Your friends" list).
+      refute view |> element("[data-test='user-results']") |> render() =~ "already_pals"
+    end
+  end
 end

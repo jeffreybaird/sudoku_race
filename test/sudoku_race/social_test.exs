@@ -709,4 +709,102 @@ defmodule SudokuRace.SocialTest do
       refute Social.friends?(alice_scope, bob)
     end
   end
+
+  describe "search_users/2" do
+    test "browse returns other users and excludes self" do
+      alice = user_fixture()
+      bob = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+
+      ids = Social.search_users(alice_scope) |> Enum.map(& &1.id)
+      assert bob.id in ids
+      refute alice.id in ids
+    end
+
+    test "excludes accepted friends" do
+      alice = user_fixture()
+      bob = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+      accepted_friendship_fixture(alice, bob)
+
+      ids = Social.search_users(alice_scope) |> Enum.map(& &1.id)
+      refute bob.id in ids
+    end
+
+    test "excludes users with a pending request in either direction" do
+      alice = user_fixture()
+      bob = user_fixture()
+      carol = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+
+      pending_friendship_fixture(alice, bob)
+      pending_friendship_fixture(carol, alice)
+
+      ids = Social.search_users(alice_scope) |> Enum.map(& &1.id)
+      refute bob.id in ids
+      refute carol.id in ids
+    end
+
+    test "filters by username (case-insensitive substring)" do
+      alice = user_fixture()
+      _match = user_fixture(username: "SpeedyGonzales")
+      _other = user_fixture(username: "slowpoke")
+      alice_scope = user_scope_fixture(alice)
+
+      results = Social.search_users(alice_scope, query: "speedy")
+      usernames = Enum.map(results, & &1.username)
+      assert "SpeedyGonzales" in usernames
+      refute "slowpoke" in usernames
+    end
+
+    test "username-less users appear in browse but never match a query" do
+      alice = user_fixture()
+      nameless = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+
+      assert nameless.id in (Social.search_users(alice_scope) |> Enum.map(& &1.id))
+      assert Social.search_users(alice_scope, query: "anything") == []
+    end
+
+    test "paginates results" do
+      alice = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+      for _ <- 1..3, do: user_fixture()
+
+      assert length(Social.search_users(alice_scope, page: 1, per_page: 2)) == 2
+    end
+  end
+
+  describe "send_friend_request/2 by user id" do
+    test "sends a pending request to a user by id" do
+      alice = user_fixture()
+      bob = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+
+      assert {:ok, friendship} = Social.send_friend_request(alice_scope, bob.id)
+      assert friendship.requester_id == alice.id
+      assert friendship.addressee_id == bob.id
+      assert friendship.status == :pending
+    end
+
+    test "returns :not_found for an unknown id" do
+      alice_scope = user_scope_fixture(user_fixture())
+      assert {:error, :not_found} = Social.send_friend_request(alice_scope, 999_999_999)
+    end
+
+    test "returns :cannot_befriend_self for own id" do
+      alice = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+      assert {:error, :cannot_befriend_self} = Social.send_friend_request(alice_scope, alice.id)
+    end
+
+    test "returns :already_friends when already accepted" do
+      alice = user_fixture()
+      bob = user_fixture()
+      alice_scope = user_scope_fixture(alice)
+      accepted_friendship_fixture(alice, bob)
+
+      assert {:error, :already_friends} = Social.send_friend_request(alice_scope, bob.id)
+    end
+  end
 end

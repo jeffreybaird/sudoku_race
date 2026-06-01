@@ -57,7 +57,7 @@ defmodule SudokuRace.Social do
     user to the current user already exists. The returned `request_id` can be
     passed directly to `accept_friend_request/2` to accept it.
   """
-  @spec send_friend_request(Scope.t(), String.t()) ::
+  @spec send_friend_request(Scope.t(), String.t() | integer()) ::
           {:ok, Friendship.t()}
           | {:error, :not_found}
           | {:error, :cannot_befriend_self}
@@ -65,8 +65,19 @@ defmodule SudokuRace.Social do
           | {:error, :already_requested}
           | {:error, :request_exists, integer()}
   def send_friend_request(%Scope{} = scope, email) when is_binary(email) do
-    with {:ok, other_user} <- lookup_user_by_email(email),
-         :ok <- reject_self_request(scope, other_user),
+    with {:ok, other_user} <- lookup_user_by_email(email) do
+      request_friendship(scope, other_user)
+    end
+  end
+
+  def send_friend_request(%Scope{} = scope, user_id) when is_integer(user_id) do
+    with {:ok, other_user} <- lookup_user_by_id(user_id) do
+      request_friendship(scope, other_user)
+    end
+  end
+
+  defp request_friendship(%Scope{} = scope, %User{} = other_user) do
+    with :ok <- reject_self_request(scope, other_user),
          :ok <- reject_if_already_friends(scope.user.id, other_user.id),
          :ok <- reject_if_pending_request_exists(scope.user.id, other_user.id) do
       insert_friend_request(scope.user.id, other_user.id)
@@ -226,8 +237,69 @@ defmodule SudokuRace.Social do
   end
 
   # ---------------------------------------------------------------------------
+  # search_users/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns users the scoped user could send a friend request to: everyone except
+  themselves and anyone they already share a friendship with (accepted OR
+  pending, in either direction).
+
+  With no `:query`, returns all addable users (browse). Pass `:query` to filter
+  by username (case-insensitive substring); username-less users never match a
+  query but do appear when browsing.
+
+  ## Options
+
+  - `:query`    — username substring filter (optional)
+  - `:page`     — 1-based page number (default: 1)
+  - `:per_page` — results per page, capped at #{@max_per_page} (default: #{@default_per_page})
+  """
+  @spec search_users(Scope.t(), keyword()) :: [User.t()]
+  def search_users(%Scope{} = scope, opts \\ []) do
+    {_page, per_page, offset} = pagination_params(opts)
+    excluded = [scope.user.id | related_user_ids(scope.user.id)]
+
+    User
+    |> where([u], u.id not in ^excluded)
+    |> maybe_filter_username(Keyword.get(opts, :query))
+    |> order_by([u], asc: u.username, asc: u.id)
+    |> limit(^per_page)
+    |> offset(^offset)
+    |> Repo.all()
+  end
+
+  # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
+
+  # All user ids that already share a friendship (pending or accepted) with the
+  # given user, in either direction — used to exclude them from search results.
+  defp related_user_ids(user_id) do
+    Friendship
+    |> where([f], f.requester_id == ^user_id or f.addressee_id == ^user_id)
+    |> select([f], {f.requester_id, f.addressee_id})
+    |> Repo.all()
+    |> Enum.flat_map(fn {requester_id, addressee_id} -> [requester_id, addressee_id] end)
+    |> Enum.uniq()
+  end
+
+  defp maybe_filter_username(queryable, query) when query in [nil, ""], do: queryable
+
+  defp maybe_filter_username(queryable, query) do
+    # Escape LIKE wildcards so user input is matched literally (PG default \ escape).
+    escaped = String.replace(query, ~r/[\\%_]/, &("\\" <> &1))
+    where(queryable, [u], ilike(u.username, ^"%#{escaped}%"))
+  end
+
+  defp lookup_user_by_id(id) when is_integer(id) and id > 0 and id <= @int4_max do
+    case Repo.get(User, id) do
+      nil -> {:error, :not_found}
+      user -> {:ok, user}
+    end
+  end
+
+  defp lookup_user_by_id(_id), do: {:error, :not_found}
 
   defp lookup_user_by_email(email) do
     case Accounts.get_user_by_email(email) do
