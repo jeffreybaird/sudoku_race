@@ -669,28 +669,33 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
             }
           });
 
-          // Keep the active cell visible above the on-screen keyboard. The
-          // focused element is the off-screen #mobile-entry input, so the
-          // browser won't scroll the board for us — nudge it ourselves using
-          // the visual viewport (which shrinks when the keyboard is shown).
-          this.scrollActiveCellIntoView = () => {
-            if (this.entryPos === null) return;
-            const cell = this.el.querySelector('[data-position="' + this.entryPos + '"]');
-            if (!cell) return;
+          // The on-screen keyboard docks over the lower rows of the board.
+          // The focused element is the off-screen #mobile-entry input, so the
+          // browser won't scroll the board for us. With little content below
+          // the board there is also nothing to scroll into, so we add bottom
+          // padding for room and then lift the whole board above the keyboard,
+          // sized from the visual viewport (which shrinks to the area the
+          // keyboard does not cover).
+          this.revealBoardAboveKeyboard = () => {
             const vv = window.visualViewport;
-            const rect = cell.getBoundingClientRect();
-            const margin = 24;
-            if (vv) {
-              const visibleBottom = vv.offsetTop + vv.height;
-              const overlap = rect.bottom - visibleBottom + margin;
-              if (overlap > 0) window.scrollBy({ top: overlap, behavior: "smooth" });
-            } else {
-              cell.scrollIntoView({ block: "center", behavior: "smooth" });
+            if (!vv) {
+              const cell =
+                this.entryPos !== null &&
+                this.el.querySelector('[data-position="' + this.entryPos + '"]');
+              if (cell) cell.scrollIntoView({ block: "center", behavior: "smooth" });
+              return;
             }
+            const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+            document.body.style.paddingBottom = keyboardHeight ? keyboardHeight + "px" : "";
+            if (!keyboardHeight) return;
+            const margin = 12;
+            const visibleBottom = vv.offsetTop + vv.height;
+            const overlap = this.el.getBoundingClientRect().bottom - visibleBottom + margin;
+            if (overlap > 0) window.scrollBy({ top: overlap, behavior: "smooth" });
           };
 
           if (window.visualViewport) {
-            this.onViewportResize = () => this.scrollActiveCellIntoView();
+            this.onViewportResize = () => this.revealBoardAboveKeyboard();
             window.visualViewport.addEventListener("resize", this.onViewportResize);
           }
 
@@ -703,8 +708,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
             this.entryPos = parseInt(cell.dataset.position, 10);
             this.entryInput.value = "";
             this.entryInput.focus();
-            // The keyboard animates in; nudge the cell above it once shown.
-            setTimeout(() => this.scrollActiveCellIntoView(), 300);
+            // The keyboard animates in; lift the board above it once shown.
+            setTimeout(() => this.revealBoardAboveKeyboard(), 300);
           });
 
           if (this.entryInput) {
@@ -725,6 +730,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           }
         },
         destroyed() {
+          document.body.style.paddingBottom = "";
           if (window.visualViewport && this.onViewportResize) {
             window.visualViewport.removeEventListener("resize", this.onViewportResize);
           }
