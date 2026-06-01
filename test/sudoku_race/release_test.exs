@@ -79,4 +79,14 @@ defmodule SudokuRace.ReleaseTest do
       assert {1, _} = Release.seed_puzzles_from_csv(path)
     end
   end
+
+  describe "bundled puzzles.csv" do
+    test "ships in the app and seeds puzzles (the prod seed_puzzles/0 source)" do
+      path = Application.app_dir(:sudoku_race, "priv/data/puzzles.csv")
+      assert File.exists?(path)
+
+      {inserted, _skipped} = Release.seed_puzzles_from_csv(path)
+      assert inserted > 0
+    end
+  end
 end
