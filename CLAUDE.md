@@ -11,7 +11,7 @@ Small Elixir / Phoenix 1.8 / LiveView app. Two-to-handful-of-users toy: pick a s
 ### Architecture Summary
 
 - **Single Postgres DB**, standard `Ecto.Repo`.
-- **Auth:** `mix phx.gen.auth` defaults — email/password + email confirmation. Do not roll custom auth.
+- **Auth:** Built on `mix phx.gen.auth` primitives (session tokens, bcrypt, scopes) but configured for **password-first registration**: register with email + password (+ optional `username`), logged in immediately, no email confirmation and **no magic link** (magic-link login was removed — it also eliminated the unconfirmed-user-with-password session-fixation footgun). Email is still the login identifier and the friend-lookup key. Don't reintroduce magic link or roll bespoke auth; keep using the gen.auth primitives.
 - **Real-time:** Phoenix PubSub for "friend solved a puzzle" notifications. One topic per user: `user:{user_id}:activity`.
 - **Puzzle pool:** Seeded from a public dataset at deploy time. Each puzzle has a clue grid, solution grid, and difficulty rating.
 - **Deployment:** DigitalOcean droplet, Docker Compose (web + Postgres on same host), Caddy reverse proxy.

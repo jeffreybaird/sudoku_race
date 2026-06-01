@@ -124,7 +124,7 @@ defmodule SudokuRaceWeb.LeaderboardLive.Index do
               </span>
               <span class="flex-1 min-w-0">
                 <span class="block text-sm font-medium text-gray-900" data-test="leaderboard-user">
-                  {entry.user.email}
+                  {entry.user.username || entry.user.email}
                 </span>
                 <.link
                   navigate={~p"/puzzles/#{entry.puzzle.id}"}

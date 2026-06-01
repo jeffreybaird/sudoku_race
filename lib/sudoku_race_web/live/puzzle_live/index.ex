@@ -371,7 +371,9 @@ defmodule SudokuRaceWeb.PuzzleLive.Index do
                 data-test="friend-solve"
                 class="text-sm text-blue-700"
               >
-                <span data-test="friend-solve-email">{@friend_times[puzzle.id].user.email}</span>
+                <span data-test="friend-solve-email">
+                  {@friend_times[puzzle.id].user.username || @friend_times[puzzle.id].user.email}
+                </span>
                 solved in
                 <span data-test="friend-solve-time" class="font-mono font-medium">
                   {format_elapsed(@friend_times[puzzle.id].elapsed_seconds)}

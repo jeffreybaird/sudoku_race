@@ -79,13 +79,40 @@ defmodule SudokuRace.AccountsTest do
       assert "has already been taken" in errors_on(changeset).email
     end
 
-    test "registers users without password" do
+    test "requires a password" do
+      {:error, changeset} = Accounts.register_user(%{email: unique_user_email()})
+      assert %{password: ["can't be blank"]} = errors_on(changeset)
+    end
+
+    test "registers a user with email + password, confirmed immediately" do
       email = unique_user_email()
       {:ok, user} = Accounts.register_user(valid_user_attributes(email: email))
       assert user.email == email
-      assert is_nil(user.hashed_password)
-      assert is_nil(user.confirmed_at)
+      # Password hashed and the virtual field cleared; account ready to use.
+      assert is_binary(user.hashed_password)
       assert is_nil(user.password)
+      assert user.confirmed_at
+    end
+
+    test "username is optional" do
+      {:ok, user} = Accounts.register_user(valid_user_attributes())
+      assert is_nil(user.username)
+    end
+
+    test "accepts a valid username" do
+      {:ok, user} = Accounts.register_user(valid_user_attributes(username: "racer_1"))
+      assert user.username == "racer_1"
+    end
+
+    test "rejects an invalid username" do
+      {:error, changeset} = Accounts.register_user(valid_user_attributes(username: "no spaces!"))
+      assert %{username: ["must be letters, numbers, or underscores"]} = errors_on(changeset)
+    end
+
+    test "validates username uniqueness" do
+      user_fixture(username: "taken_name")
+      {:error, changeset} = Accounts.register_user(valid_user_attributes(username: "taken_name"))
+      assert "has already been taken" in errors_on(changeset).username
     end
   end
 
@@ -136,7 +163,7 @@ defmodule SudokuRace.AccountsTest do
 
   describe "update_user_email/2" do
     setup do
-      user = unconfirmed_user_fixture()
+      user = user_fixture()
       email = unique_user_email()
 
       token =
@@ -309,85 +336,12 @@ defmodule SudokuRace.AccountsTest do
     end
   end
 
-  describe "get_user_by_magic_link_token/1" do
-    setup do
-      user = user_fixture()
-      {encoded_token, _hashed_token} = generate_user_magic_link_token(user)
-      %{user: user, token: encoded_token}
-    end
-
-    test "returns user by token", %{user: user, token: token} do
-      assert session_user = Accounts.get_user_by_magic_link_token(token)
-      assert session_user.id == user.id
-    end
-
-    test "does not return user for invalid token" do
-      refute Accounts.get_user_by_magic_link_token("oops")
-    end
-
-    test "does not return user for expired token", %{token: token} do
-      {1, nil} = Repo.update_all(UserToken, set: [inserted_at: ~N[2020-01-01 00:00:00]])
-      refute Accounts.get_user_by_magic_link_token(token)
-    end
-  end
-
-  describe "login_user_by_magic_link/1" do
-    test "confirms user and expires tokens" do
-      user = unconfirmed_user_fixture()
-      refute user.confirmed_at
-      {encoded_token, hashed_token} = generate_user_magic_link_token(user)
-
-      assert {:ok, {user, [%{token: ^hashed_token}]}} =
-               Accounts.login_user_by_magic_link(encoded_token)
-
-      assert user.confirmed_at
-    end
-
-    test "returns user and (deleted) token for confirmed user" do
-      user = user_fixture()
-      assert user.confirmed_at
-      {encoded_token, _hashed_token} = generate_user_magic_link_token(user)
-      assert {:ok, {^user, []}} = Accounts.login_user_by_magic_link(encoded_token)
-      # one time use only
-      assert {:error, :not_found} = Accounts.login_user_by_magic_link(encoded_token)
-    end
-
-    test "raises when unconfirmed user has password set" do
-      user = unconfirmed_user_fixture()
-      {1, nil} = Repo.update_all(User, set: [hashed_password: "hashed"])
-      {encoded_token, _hashed_token} = generate_user_magic_link_token(user)
-
-      assert_raise RuntimeError, ~r/magic link log in is not allowed/, fn ->
-        Accounts.login_user_by_magic_link(encoded_token)
-      end
-    end
-  end
-
   describe "delete_user_session_token/1" do
     test "deletes the token" do
       user = user_fixture()
       token = Accounts.generate_user_session_token(user)
       assert Accounts.delete_user_session_token(token) == :ok
       refute Accounts.get_user_by_session_token(token)
-    end
-  end
-
-  describe "deliver_login_instructions/2" do
-    setup do
-      %{user: unconfirmed_user_fixture()}
-    end
-
-    test "sends token through notification", %{user: user} do
-      token =
-        extract_user_token(fn url ->
-          Accounts.deliver_login_instructions(user, url)
-        end)
-
-      {:ok, token} = Base.url_decode64(token, padding: false)
-      assert user_token = Repo.get_by(UserToken, token: :crypto.hash(:sha256, token))
-      assert user_token.user_id == user.id
-      assert user_token.sent_to == user.email
-      assert user_token.context == "login"
     end
   end
 

@@ -22,7 +22,14 @@ defmodule SudokuRaceWeb.UserLive.Registration do
           </.header>
         </div>
 
-        <.form for={@form} id="registration_form" phx-submit="save" phx-change="validate">
+        <.form
+          for={@form}
+          id="registration_form"
+          action={~p"/users/log-in?_action=registered"}
+          phx-submit="save"
+          phx-change="validate"
+          phx-trigger-action={@trigger_submit}
+        >
           <.input
             field={@form[:email]}
             type="email"
@@ -31,6 +38,21 @@ defmodule SudokuRaceWeb.UserLive.Registration do
             spellcheck="false"
             required
             phx-mounted={JS.focus()}
+          />
+          <.input
+            field={@form[:username]}
+            type="text"
+            label="Username (optional)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <.input
+            field={@form[:password]}
+            type="password"
+            label="Password"
+            autocomplete="new-password"
+            spellcheck="false"
+            required
           />
 
           <.button phx-disable-with="Creating account..." class="btn btn-primary w-full">
@@ -49,36 +71,34 @@ defmodule SudokuRaceWeb.UserLive.Registration do
   end
 
   def mount(_params, _session, socket) do
-    changeset = Accounts.change_user_email(%User{}, %{}, validate_unique: false)
+    changeset = Accounts.change_user_registration(%User{})
 
-    {:ok, assign_form(socket, changeset), temporary_assigns: [form: nil]}
+    {:ok, socket |> assign(trigger_submit: false) |> assign_form(changeset)}
   end
 
   @impl true
   def handle_event("save", %{"user" => user_params}, socket) do
     case Accounts.register_user(user_params) do
-      {:ok, user} ->
-        {:ok, _} =
-          Accounts.deliver_login_instructions(
-            user,
-            &url(~p"/users/log-in/#{&1}")
-          )
-
-        {:noreply,
-         socket
-         |> put_flash(
-           :info,
-           "An email was sent to #{user.email}, please access it to confirm your account."
-         )
-         |> push_navigate(to: ~p"/users/log-in")}
+      {:ok, _user} ->
+        # Re-render the form (carrying the submitted credentials) and trigger a
+        # real POST to the session controller, which establishes the session.
+        changeset = Accounts.change_user_registration(%User{}, user_params)
+        {:noreply, socket |> assign(trigger_submit: true) |> assign_form(changeset)}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, assign_form(socket, changeset)}
+        # Don't echo the submitted password back into the re-rendered form. The
+        # form value comes from changeset params, so scrub both params and change.
+        scrubbed = %{
+          Ecto.Changeset.delete_change(changeset, :password)
+          | params: Map.delete(changeset.params || %{}, "password")
+        }
+
+        {:noreply, assign_form(socket, scrubbed)}
     end
   end
 
   def handle_event("validate", %{"user" => user_params}, socket) do
-    changeset = Accounts.change_user_email(%User{}, user_params, validate_unique: false)
+    changeset = Accounts.change_user_registration(%User{}, user_params)
     {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
   end
 

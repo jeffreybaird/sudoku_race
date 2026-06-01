@@ -4,12 +4,68 @@ defmodule SudokuRace.Accounts.User do
 
   schema "users" do
     field :email, :string
+    field :username, :string
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
 
     timestamps(type: :utc_datetime)
+  end
+
+  @doc """
+  A changeset for registering a new account with email, password, and an
+  optional username. Password is hashed; the account is created ready to use
+  (no email confirmation / magic link).
+
+  ## Options
+
+    * `:hash_password` - set to `false` for live validation (skips hashing).
+    * `:validate_unique` - set to `false` to skip DB uniqueness lookups
+      (live validation). Defaults to `true`.
+  """
+  def registration_changeset(user, attrs, opts \\ []) do
+    user
+    |> cast(attrs, [:email, :username, :password])
+    |> validate_email(opts)
+    |> validate_username(opts)
+    |> validate_password(opts)
+  end
+
+  @doc """
+  A changeset for changing only the username (optional field).
+  """
+  def username_changeset(user, attrs, opts \\ []) do
+    user
+    |> cast(attrs, [:username])
+    |> validate_username(opts)
+  end
+
+  defp validate_username(changeset, opts) do
+    # Username is optional. A blank value casts to nil and is left alone; only a
+    # present value is length/format/uniqueness checked. Guarding on the change
+    # also avoids unsafe_validate_unique querying `username IS NULL` (which would
+    # match every account without a username).
+    if get_change(changeset, :username) do
+      changeset
+      |> validate_length(:username, min: 3, max: 30)
+      |> validate_format(:username, ~r/^[a-zA-Z0-9_]+$/,
+        message: "must be letters, numbers, or underscores"
+      )
+      |> maybe_validate_unique_username(opts)
+    else
+      changeset
+    end
+  end
+
+  defp maybe_validate_unique_username(changeset, opts) do
+    if Keyword.get(opts, :validate_unique, true) do
+      changeset
+      |> unsafe_validate_unique(:username, SudokuRace.Repo)
+      |> unique_constraint(:username)
+    else
+      changeset
+    end
   end
 
   @doc """
