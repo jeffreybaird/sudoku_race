@@ -65,6 +65,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           |> assign(:status_message, nil)
           |> assign(:input_mode, :pointer)
           |> assign(:friend_ids, friend_ids)
+          |> reset_history()
           |> load_attempt_state(scope, puzzle.id, puzzle.clues)
 
         {:ok, socket}
@@ -101,6 +102,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           |> assign(:grid, build_grid(puzzle.clues))
           |> assign(:focused_cell, first_editable_index(puzzle.clues))
           |> assign(:status_message, nil)
+          |> reset_history()
           |> push_timer_seed(attempt)
 
         {:noreply, socket}
@@ -165,6 +167,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           |> assign(:view_state, :playing)
           |> assign(:focused_cell, first_editable_index(socket.assigns.puzzle.clues))
           |> assign(:status_message, "Resumed")
+          |> reset_history()
           |> push_timer_seed(resumed)
 
         {:noreply, socket}
@@ -192,23 +195,18 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     clue_at_pos = String.at(clues, pos)
 
     # Only allow entry on non-given cells
-    if clue_at_pos == "0" do
-      new_grid = List.replace_at(grid, pos, value)
-      socket = assign(socket, :grid, new_grid)
+    new_grid = if clue_at_pos == "0", do: List.replace_at(grid, pos, value), else: grid
 
-      # Persist the server-derived board so progress survives reconnect/deploy.
-      socket =
-        case Attempts.save_entries(
-               socket.assigns.current_scope,
-               socket.assigns.attempt,
-               Enum.join(new_grid)
-             ) do
-          {:ok, attempt} -> assign(socket, :attempt, attempt)
-          {:error, _reason} -> socket
-        end
-
+    if new_grid == grid do
       {:noreply, socket}
     else
+      socket =
+        socket
+        |> assign(:undo_stack, [grid | socket.assigns.undo_stack])
+        |> assign(:redo_stack, [])
+        |> assign(:grid, new_grid)
+        |> persist_grid(new_grid)
+
       {:noreply, socket}
     end
   end
@@ -220,6 +218,46 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
         handle_event("cell_entry", %{"position" => int_pos, "value" => value}, socket)
 
       _ ->
+        {:noreply, socket}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Undo / redo (move history is ephemeral; the board itself is persisted)
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def handle_event("undo", _params, socket) do
+    case socket.assigns.undo_stack do
+      [prev | rest] ->
+        socket =
+          socket
+          |> assign(:undo_stack, rest)
+          |> assign(:redo_stack, [socket.assigns.grid | socket.assigns.redo_stack])
+          |> assign(:grid, prev)
+          |> persist_grid(prev)
+
+        {:noreply, socket}
+
+      [] ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("redo", _params, socket) do
+    case socket.assigns.redo_stack do
+      [next | rest] ->
+        socket =
+          socket
+          |> assign(:redo_stack, rest)
+          |> assign(:undo_stack, [socket.assigns.grid | socket.assigns.undo_stack])
+          |> assign(:grid, next)
+          |> persist_grid(next)
+
+        {:noreply, socket}
+
+      [] ->
         {:noreply, socket}
     end
   end
@@ -481,55 +519,59 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               <% end %>
             </div>
 
+            <%!-- Action bar: undo / redo / erase. Available in every input mode. --%>
+            <div class="mt-4 flex items-center justify-center gap-2" data-test="action-bar">
+              <button
+                type="button"
+                data-test="undo-button"
+                phx-click="undo"
+                disabled={@undo_stack == []}
+                aria-label="Undo last move"
+                class={action_button_class()}
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                data-test="redo-button"
+                phx-click="redo"
+                disabled={@redo_stack == []}
+                aria-label="Redo move"
+                class={action_button_class()}
+              >
+                Redo
+              </button>
+              <button
+                type="button"
+                data-test="erase-button"
+                phx-click="cell_entry"
+                phx-value-position={@focused_cell}
+                phx-value-value="0"
+                aria-label="Erase cell"
+                class={action_button_class()}
+              >
+                Erase
+              </button>
+            </div>
+
             <%!-- On-screen number pad. Primary input on touch (no native keyboard, so the board stays fully visible); a convenience on pointer, where the physical keyboard is primary. --%>
-            <%= if @input_mode == :touch do %>
-              <div class="mt-4 select-none" data-test="number-pad" aria-label="Number pad">
-                <div class="grid grid-cols-9 gap-1">
-                  <%= for digit <- 1..9 do %>
-                    <button
-                      type="button"
-                      data-test="numpad-button"
-                      phx-click="cell_entry"
-                      phx-value-position={@focused_cell}
-                      phx-value-value={Integer.to_string(digit)}
-                      class="flex h-12 min-h-[44px] items-center justify-center rounded-lg bg-gray-100 text-lg font-semibold text-indigo-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                      aria-label={"Enter #{digit}"}
-                    >
-                      {digit}
-                    </button>
-                  <% end %>
-                </div>
-                <button
-                  type="button"
-                  data-test="numpad-erase"
-                  phx-click="cell_entry"
-                  phx-value-position={@focused_cell}
-                  phx-value-value="0"
-                  class="mt-1.5 flex h-11 min-h-[44px] w-full items-center justify-center rounded-lg bg-gray-100 text-sm font-medium text-gray-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                  aria-label="Erase cell"
-                >
-                  Erase
-                </button>
+            <div class="mt-3 select-none" data-test="number-pad" aria-label="Number pad">
+              <div class="grid grid-cols-9 gap-1">
+                <%= for digit <- 1..9 do %>
+                  <button
+                    type="button"
+                    data-test="numpad-button"
+                    phx-click="cell_entry"
+                    phx-value-position={@focused_cell}
+                    phx-value-value={Integer.to_string(digit)}
+                    class={numpad_button_class(@input_mode)}
+                    aria-label={"Enter #{digit}"}
+                  >
+                    {digit}
+                  </button>
+                <% end %>
               </div>
-            <% else %>
-              <div class="mt-4 select-none" data-test="number-pad" aria-label="Number pad">
-                <div class="grid grid-cols-9 gap-1">
-                  <%= for digit <- 1..9 do %>
-                    <button
-                      type="button"
-                      data-test="numpad-button"
-                      phx-click="cell_entry"
-                      phx-value-position={@focused_cell}
-                      phx-value-value={Integer.to_string(digit)}
-                      class="flex h-11 min-h-[44px] w-full items-center justify-center rounded-lg bg-gray-100 text-sm font-semibold text-gray-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                      aria-label={"Enter #{digit}"}
-                    >
-                      {digit}
-                    </button>
-                  <% end %>
-                </div>
-              </div>
-            <% end %>
+            </div>
 
             <%!-- Submit button --%>
             <div class="mt-6 flex justify-end">
@@ -704,6 +746,45 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
+
+  # Shared style for the undo/redo/erase action buttons (44px touch targets).
+  defp action_button_class do
+    "inline-flex min-h-[44px] items-center gap-1 rounded-lg border border-gray-300 px-3 py-2 " <>
+      "text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 " <>
+      "focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+  end
+
+  # Number-pad button style: larger digits on touch, compact on pointer.
+  defp numpad_button_class(:touch) do
+    "flex h-12 min-h-[44px] items-center justify-center rounded-lg bg-gray-100 text-lg " <>
+      "font-semibold text-indigo-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 " <>
+      "focus:ring-indigo-500 transition-colors"
+  end
+
+  defp numpad_button_class(_pointer) do
+    "flex h-11 min-h-[44px] w-full items-center justify-center rounded-lg bg-gray-100 text-sm " <>
+      "font-semibold text-gray-700 hover:bg-indigo-100 focus:outline-none focus:ring-2 " <>
+      "focus:ring-indigo-500 transition-colors"
+  end
+
+  # Clear the ephemeral undo/redo move history (e.g. on start/resume/mount).
+  defp reset_history(socket) do
+    socket
+    |> assign(:undo_stack, [])
+    |> assign(:redo_stack, [])
+  end
+
+  # Persist the server-derived board so progress survives reconnect/deploy.
+  defp persist_grid(socket, grid) do
+    case Attempts.save_entries(
+           socket.assigns.current_scope,
+           socket.assigns.attempt,
+           Enum.join(grid)
+         ) do
+      {:ok, attempt} -> assign(socket, :attempt, attempt)
+      {:error, _reason} -> socket
+    end
+  end
 
   # Load the current attempt for this user+puzzle and set view_state + grid assigns.
   # Called on mount and on state re-sync after stale errors.
