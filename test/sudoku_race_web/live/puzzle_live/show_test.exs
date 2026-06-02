@@ -577,13 +577,36 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       assert html =~ ~s(aria-label="Enter 1")
     end
 
-    test "grid exposes data-focused-cell for the keyboard hook", %{conn: conn, puzzle: puzzle} do
+    test "keyboard input uses the core phx-window-keydown binding, not a custom hook", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
       {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
       html = render(view)
 
-      # The GridKeyboard hook drives off this server attribute (not browser focus,
-      # which Safari/Firefox don't set on a clicked <button>). Must be present.
-      assert html =~ ~s(data-focused-cell=)
+      # Core binding (works whenever the LiveView is connected) rather than a
+      # colocated JS hook, which failed to register in some browsers.
+      assert html =~ ~s(phx-window-keydown="key_press")
+    end
+
+    test "key_press routes a digit, erase, and arrow to entry/focus", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      render_hook(view, "cell_focus", %{"position" => 35})
+
+      # Digit places a final value (Notes off).
+      render_hook(view, "key_press", %{"key" => "6"})
+      assert grid_at(view, 35) == "6"
+
+      # Backspace erases.
+      render_hook(view, "key_press", %{"key" => "Backspace"})
+      assert grid_at(view, 35) == "0"
+
+      # Arrow moves the focus.
+      render_hook(view, "key_press", %{"key" => "ArrowRight"})
+      assert :sys.get_state(view.pid).socket.assigns.focused_cell == 36
     end
 
     test "pad uses phx-value-digit, not phx-value-value (button .value collision)", %{
@@ -1294,6 +1317,22 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       assert grid_at(view, 35) == "0"
 
       render_hook(view, "cell_entry", %{"position" => 35, "value" => "4"})
+      assert notes_at(view, 35) == nil
+    end
+
+    test "physical keyboard (key_press) toggles a candidate in Notes mode", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      render_hook(view, "cell_focus", %{"position" => 35})
+      view |> element("[data-test='notes-toggle']") |> render_click()
+
+      render_hook(view, "key_press", %{"key" => "4"})
+      assert notes_at(view, 35) == [4]
+      assert grid_at(view, 35) == "0"
+
+      render_hook(view, "key_press", %{"key" => "4"})
       assert notes_at(view, 35) == nil
     end
 

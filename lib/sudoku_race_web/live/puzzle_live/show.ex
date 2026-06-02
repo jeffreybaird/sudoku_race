@@ -255,7 +255,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   end
 
   # ---------------------------------------------------------------------------
-  # Cell focus (routed from GridKeyboard hook)
+  # Cell focus (from cell click) + physical keyboard (phx-window-keydown)
   # ---------------------------------------------------------------------------
 
   @impl true
@@ -268,6 +268,15 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
       {int_pos, ""} -> {:noreply, assign(socket, :focused_cell, int_pos)}
       _ -> {:noreply, socket}
     end
+  end
+
+  # Physical keyboard via the core `phx-window-keydown` binding (no custom JS
+  # hook — works in any browser as long as the LiveView is connected). Digits
+  # enter at the focused cell (a candidate in Notes mode, a value otherwise),
+  # Backspace/Delete/0 erase, and arrows move the focus.
+  @impl true
+  def handle_event("key_press", %{"key" => key}, socket) do
+    {:noreply, handle_key(socket, key)}
   end
 
   # ---------------------------------------------------------------------------
@@ -460,8 +469,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               aria-label="Sudoku puzzle"
               data-test="sudoku-grid"
               data-input-mode={to_string(@input_mode)}
-              data-focused-cell={@focused_cell}
-              phx-hook=".GridKeyboard"
+              phx-window-keydown="key_press"
               class="grid grid-cols-9 border-2 border-gray-800 rounded-sm select-none"
             >
               <%= for row <- 0..8 do %>
@@ -706,57 +714,6 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     </script>
 
     <%!--
-      .GridKeyboard hook: routes physical-keyboard input from the focused grid
-      cell to server-side cell_focus and cell_entry handlers (arrows move focus,
-      digits enter, backspace/delete clear). Touch input uses the on-screen
-      number pad instead. No validation logic here.
-    --%>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".GridKeyboard">
-      export default {
-        mounted() {
-          // Drive off the SERVER's focused cell (data-focused-cell), not
-          // document.activeElement: macOS Safari/Firefox don't focus a <button>
-          // on click, so activeElement-based input never fired there. Listening
-          // on document also means typing works immediately, without a click.
-          this._onKeydown = (e) => {
-            // Don't hijack keys while typing in a real text field.
-            const tag = (document.activeElement && document.activeElement.tagName) || "";
-            if (tag === "INPUT" || tag === "TEXTAREA") return;
-
-            const raw = this.el.dataset.focusedCell;
-            const pos = raw === undefined || raw === "" ? null : parseInt(raw, 10);
-            if (pos === null || Number.isNaN(pos)) return;
-
-            const arrowMoves = {
-              ArrowUp: pos - 9,
-              ArrowDown: pos + 9,
-              ArrowLeft: pos - 1,
-              ArrowRight: pos + 1,
-            };
-
-            if (arrowMoves[e.key] !== undefined) {
-              e.preventDefault();
-              const next = arrowMoves[e.key];
-              if (next >= 0 && next < 81) {
-                this.pushEvent("cell_focus", { position: next });
-              }
-            } else if (e.key >= "1" && e.key <= "9") {
-              e.preventDefault();
-              this.pushEvent("cell_entry", { position: pos, value: e.key });
-            } else if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") {
-              e.preventDefault();
-              this.pushEvent("cell_entry", { position: pos, value: "0" });
-            }
-          };
-          document.addEventListener("keydown", this._onKeydown);
-        },
-        destroyed() {
-          document.removeEventListener("keydown", this._onKeydown);
-        }
-      }
-    </script>
-
-    <%!--
       .InputModeDetect hook: detects coarse pointer (touch) vs. fine pointer (mouse)
       and pushes input_mode:detect to the server once on mount. Session-only.
     --%>
@@ -820,6 +777,31 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   end
 
   defp apply_entry(socket, _pos, _value), do: socket
+
+  # Route a physical keydown (from phx-window-keydown) to entry or focus movement.
+  defp handle_key(socket, key) when key in ~w(1 2 3 4 5 6 7 8 9) do
+    apply_entry(socket, socket.assigns.focused_cell, key)
+  end
+
+  defp handle_key(socket, key) when key in ["0", "Backspace", "Delete"] do
+    apply_entry(socket, socket.assigns.focused_cell, "0")
+  end
+
+  defp handle_key(socket, "ArrowUp"), do: move_focus(socket, -9)
+  defp handle_key(socket, "ArrowDown"), do: move_focus(socket, 9)
+  defp handle_key(socket, "ArrowLeft"), do: move_focus(socket, -1)
+  defp handle_key(socket, "ArrowRight"), do: move_focus(socket, 1)
+  defp handle_key(socket, _other), do: socket
+
+  defp move_focus(socket, delta) do
+    case socket.assigns.focused_cell do
+      pos when is_integer(pos) and pos + delta >= 0 and pos + delta < 81 ->
+        assign(socket, :focused_cell, pos + delta)
+
+      _ ->
+        socket
+    end
+  end
 
   # Erase: clear the final value and any notes for the cell.
   defp next_state(socket, pos, "0") do
