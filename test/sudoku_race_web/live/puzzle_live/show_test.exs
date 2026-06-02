@@ -748,6 +748,23 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       {:ok, puzzle: puzzle, attempt: attempt}
     end
 
+    test "clicking the number pad enters the digit into the selected cell", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      # Select an editable cell by clicking it, exactly as a user would.
+      # (35 is a non-given cell in the fixture.)
+      view |> element("[data-test='grid-cell'][data-position='35']") |> render_click()
+
+      # Click the rendered "7" button on the pad — exercises the real markup,
+      # not just the handler, so a button-wiring regression would be caught.
+      view |> element("[data-test='numpad-button']", "7") |> render_click()
+
+      assert grid_at(view, 35) == "7"
+    end
+
     test "erase clears the focused cell", %{conn: conn, puzzle: puzzle} do
       {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
 

@@ -184,42 +184,29 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   end
 
   # ---------------------------------------------------------------------------
-  # Cell entry (routed from GridKeyboard hook)
+  # Cell entry — `cell_entry` carries an explicit position (physical keyboard
+  # via GridKeyboard hook); `pad_entry` is server-authoritative and applies the
+  # digit to the currently focused cell (on-screen number pad + erase), so it
+  # never depends on a rendered position attribute.
   # ---------------------------------------------------------------------------
 
   @impl true
   def handle_event("cell_entry", %{"position" => pos, "value" => value}, socket)
       when is_integer(pos) do
-    grid = socket.assigns.grid
-    clues = socket.assigns.puzzle.clues
-    clue_at_pos = String.at(clues, pos)
-
-    # Only allow entry on non-given cells
-    new_grid = if clue_at_pos == "0", do: List.replace_at(grid, pos, value), else: grid
-
-    if new_grid == grid do
-      {:noreply, socket}
-    else
-      socket =
-        socket
-        |> assign(:undo_stack, [grid | socket.assigns.undo_stack])
-        |> assign(:redo_stack, [])
-        |> assign(:grid, new_grid)
-        |> persist_grid(new_grid)
-
-      {:noreply, socket}
-    end
+    {:noreply, apply_entry(socket, pos, value)}
   end
 
   def handle_event("cell_entry", %{"position" => pos, "value" => value}, socket)
       when is_binary(pos) do
     case Integer.parse(pos) do
-      {int_pos, ""} ->
-        handle_event("cell_entry", %{"position" => int_pos, "value" => value}, socket)
-
-      _ ->
-        {:noreply, socket}
+      {int_pos, ""} -> {:noreply, apply_entry(socket, int_pos, value)}
+      _ -> {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("pad_entry", %{"value" => value}, socket) do
+    {:noreply, apply_entry(socket, socket.assigns.focused_cell, value)}
   end
 
   # ---------------------------------------------------------------------------
@@ -544,8 +531,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               <button
                 type="button"
                 data-test="erase-button"
-                phx-click="cell_entry"
-                phx-value-position={@focused_cell}
+                phx-click="pad_entry"
                 phx-value-value="0"
                 aria-label="Erase cell"
                 class={action_button_class()}
@@ -561,8 +547,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                   <button
                     type="button"
                     data-test="numpad-button"
-                    phx-click="cell_entry"
-                    phx-value-position={@focused_cell}
+                    phx-click="pad_entry"
                     phx-value-value={Integer.to_string(digit)}
                     class={numpad_button_class(@input_mode)}
                     aria-label={"Enter #{digit}"}
@@ -773,6 +758,26 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     |> assign(:undo_stack, [])
     |> assign(:redo_stack, [])
   end
+
+  # Apply a digit ("1".."9") or clear ("0") to a cell, recording undo history.
+  # Entries on given cells or no-op writes change nothing. Returns the socket.
+  defp apply_entry(socket, pos, value) when is_integer(pos) do
+    grid = socket.assigns.grid
+    clue_at_pos = String.at(socket.assigns.puzzle.clues, pos)
+    new_grid = if clue_at_pos == "0", do: List.replace_at(grid, pos, value), else: grid
+
+    if new_grid == grid do
+      socket
+    else
+      socket
+      |> assign(:undo_stack, [grid | socket.assigns.undo_stack])
+      |> assign(:redo_stack, [])
+      |> assign(:grid, new_grid)
+      |> persist_grid(new_grid)
+    end
+  end
+
+  defp apply_entry(socket, _pos, _value), do: socket
 
   # Persist the server-derived board so progress survives reconnect/deploy.
   defp persist_grid(socket, grid) do
