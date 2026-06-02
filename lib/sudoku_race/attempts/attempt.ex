@@ -35,6 +35,8 @@ defmodule SudokuRace.Attempts.Attempt do
     # Current board (81-char string, "0" = blank); persisted as the user plays
     # so progress survives reconnects/deploys.
     field :entries, :string
+    # Pencil-mark candidates per cell: %{"<position>" => [1, 4, 7], ...}.
+    field :notes, :map, default: %{}
 
     timestamps(type: :utc_datetime)
   end
@@ -64,7 +66,8 @@ defmodule SudokuRace.Attempts.Attempt do
       :segment_started_at,
       :completed_at,
       :elapsed_seconds,
-      :entries
+      :entries,
+      :notes
     ])
     |> validate_required([:status])
     |> validate_inclusion(:status, @valid_statuses)

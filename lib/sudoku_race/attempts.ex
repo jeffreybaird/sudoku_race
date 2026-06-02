@@ -202,6 +202,36 @@ defmodule SudokuRace.Attempts do
   end
 
   # ---------------------------------------------------------------------------
+  # save_notes/3
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Persists pencil-mark notes for an in-progress attempt so they survive a
+  reconnect or deploy (mirrors `save_entries/3`).
+
+  `notes` is a map of `position => [candidate digits]` (e.g. `%{"35" => [1, 4]}`).
+  Only the owner may save, and only while in progress.
+
+  Returns `{:ok, attempt}`.
+  Returns `{:error, :not_in_progress}` if the attempt is paused or completed.
+  Returns `{:error, :forbidden}` if the scope user does not own the attempt.
+  Returns `{:error, :not_found}` if the attempt does not exist.
+  """
+  @spec save_notes(Scope.t(), Attempt.t() | integer() | String.t(), map()) ::
+          {:ok, Attempt.t()}
+          | {:error, :not_in_progress}
+          | {:error, :forbidden}
+          | {:error, :not_found}
+  def save_notes(%Scope{} = scope, attempt_or_id, notes) when is_map(notes) do
+    with {:ok, attempt} <- load_and_authorize(scope, attempt_or_id),
+         :ok <- require_status(attempt, :in_progress, :not_in_progress) do
+      attempt
+      |> Attempt.update_changeset(%{notes: notes})
+      |> Repo.update()
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # submit_attempt/3
   # ---------------------------------------------------------------------------
 

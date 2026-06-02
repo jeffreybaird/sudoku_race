@@ -101,6 +101,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           |> assign(:view_state, :playing)
           |> assign(:grid, build_grid(puzzle.clues))
           |> assign(:focused_cell, first_editable_index(puzzle.clues))
+          |> assign(:notes, %{})
+          |> assign(:notes_mode, false)
           |> assign(:status_message, nil)
           |> reset_history()
           |> push_timer_seed(attempt)
@@ -209,6 +211,11 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     {:noreply, apply_entry(socket, socket.assigns.focused_cell, value)}
   end
 
+  @impl true
+  def handle_event("toggle_notes", _params, socket) do
+    {:noreply, assign(socket, :notes_mode, not socket.assigns.notes_mode)}
+  end
+
   # ---------------------------------------------------------------------------
   # Undo / redo (move history is ephemeral; the board itself is persisted)
   # ---------------------------------------------------------------------------
@@ -220,9 +227,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
         socket =
           socket
           |> assign(:undo_stack, rest)
-          |> assign(:redo_stack, [socket.assigns.grid | socket.assigns.redo_stack])
-          |> assign(:grid, prev)
-          |> persist_grid(prev)
+          |> assign(:redo_stack, [current_snapshot(socket) | socket.assigns.redo_stack])
+          |> restore_snapshot(prev)
 
         {:noreply, socket}
 
@@ -238,9 +244,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
         socket =
           socket
           |> assign(:redo_stack, rest)
-          |> assign(:undo_stack, [socket.assigns.grid | socket.assigns.undo_stack])
-          |> assign(:grid, next)
-          |> persist_grid(next)
+          |> assign(:undo_stack, [current_snapshot(socket) | socket.assigns.undo_stack])
+          |> restore_snapshot(next)
 
         {:noreply, socket}
 
@@ -467,8 +472,9 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                     <% is_given = clue_digit != "0" %>
                     <% cell_value = Enum.at(@grid, pos) %>
                     <% display_value = if is_given, do: clue_digit, else: cell_value %>
+                    <% cell_notes = Map.get(@notes, pos, []) %>
                     <% is_focused = @focused_cell == pos %>
-                    <% label = cell_aria_label(row, col, is_given, display_value) %>
+                    <% label = cell_label(row, col, is_given, display_value, cell_notes) %>
                     <button
                       type="button"
                       role="gridcell"
@@ -494,12 +500,23 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                         )
                       ]}
                     >
-                      <%= if is_given do %>
-                        <span aria-hidden="true">{clue_digit}</span>
-                      <% else %>
-                        <span aria-hidden="true">
-                          {if display_value != "0", do: display_value, else: ""}
-                        </span>
+                      <%= cond do %>
+                        <% is_given -> %>
+                          <span aria-hidden="true">{clue_digit}</span>
+                        <% display_value != "0" -> %>
+                          <span aria-hidden="true">{display_value}</span>
+                        <% cell_notes != [] -> %>
+                          <div
+                            aria-hidden="true"
+                            data-test="cell-notes"
+                            class="grid h-full w-full grid-cols-3 grid-rows-3 p-0.5 text-[0.5rem] leading-none text-gray-500"
+                          >
+                            <span :for={d <- 1..9} class="flex items-center justify-center">
+                              {if d in cell_notes, do: d, else: ""}
+                            </span>
+                          </div>
+                        <% true -> %>
+                          <span aria-hidden="true"></span>
                       <% end %>
                     </button>
                   <% end %>
@@ -538,6 +555,19 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                 class={action_button_class()}
               >
                 Erase
+              </button>
+              <button
+                type="button"
+                data-test="notes-toggle"
+                phx-click="toggle_notes"
+                aria-pressed={to_string(@notes_mode)}
+                aria-label="Toggle notes mode"
+                class={[
+                  action_button_class(),
+                  if(@notes_mode, do: "bg-indigo-600 text-white hover:bg-indigo-700", else: "")
+                ]}
+              >
+                Notes {if @notes_mode, do: "ON", else: "OFF"}
               </button>
             </div>
 
@@ -773,36 +803,107 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   end
 
   # Apply a digit ("1".."9") or clear ("0") to a cell, recording undo history.
-  # Entries on given cells or no-op writes change nothing. Returns the socket.
+  #
+  # Behaviour depends on Notes mode:
+  # - erase ("0") clears both the final value and the cell's notes;
+  # - in Notes mode a digit toggles a candidate (final-valued cells ignore it);
+  # - otherwise a digit places a final value and clears that cell's notes.
+  # Entries on given cells or no-op writes change nothing.
   defp apply_entry(socket, pos, value) when is_integer(pos) do
-    grid = socket.assigns.grid
-    clue_at_pos = String.at(socket.assigns.puzzle.clues, pos)
-    new_grid = if clue_at_pos == "0", do: List.replace_at(grid, pos, value), else: grid
-
-    if new_grid == grid do
-      socket
+    if String.at(socket.assigns.puzzle.clues, pos) == "0" do
+      {grid, notes} = next_state(socket, pos, value)
+      commit(socket, grid, notes)
     else
+      # Given (clue) cell — never editable.
       socket
-      |> assign(:undo_stack, [grid | socket.assigns.undo_stack])
-      |> assign(:redo_stack, [])
-      |> assign(:grid, new_grid)
-      |> persist_grid(new_grid)
     end
   end
 
   defp apply_entry(socket, _pos, _value), do: socket
 
-  # Persist the server-derived board so progress survives reconnect/deploy.
-  defp persist_grid(socket, grid) do
-    case Attempts.save_entries(
-           socket.assigns.current_scope,
-           socket.assigns.attempt,
-           Enum.join(grid)
-         ) do
-      {:ok, attempt} -> assign(socket, :attempt, attempt)
-      {:error, _reason} -> socket
+  # Erase: clear the final value and any notes for the cell.
+  defp next_state(socket, pos, "0") do
+    {List.replace_at(socket.assigns.grid, pos, "0"), Map.delete(socket.assigns.notes, pos)}
+  end
+
+  defp next_state(%{assigns: %{notes_mode: true}} = socket, pos, value) do
+    grid = socket.assigns.grid
+
+    if Enum.at(grid, pos) == "0" do
+      # No final value — toggle the candidate.
+      {grid, toggle_note(socket.assigns.notes, pos, String.to_integer(value))}
+    else
+      # Final-valued cell ignores note entry.
+      {grid, socket.assigns.notes}
     end
   end
+
+  defp next_state(socket, pos, value) do
+    # Final value: place it and clear that cell's notes.
+    {List.replace_at(socket.assigns.grid, pos, value), Map.delete(socket.assigns.notes, pos)}
+  end
+
+  defp toggle_note(notes, pos, digit) do
+    current = Map.get(notes, pos, [])
+
+    updated =
+      if digit in current,
+        do: List.delete(current, digit),
+        else: Enum.sort([digit | current])
+
+    if updated == [], do: Map.delete(notes, pos), else: Map.put(notes, pos, updated)
+  end
+
+  # Snapshot grid + notes together so a note toggle is undoable.
+  defp current_snapshot(socket) do
+    %{grid: socket.assigns.grid, notes: socket.assigns.notes}
+  end
+
+  defp restore_snapshot(socket, %{grid: grid, notes: notes}) do
+    socket
+    |> assign(:grid, grid)
+    |> assign(:notes, notes)
+    |> persist_state(grid, notes)
+  end
+
+  # Push history, apply the new state, and persist — unless nothing changed.
+  defp commit(socket, new_grid, new_notes) do
+    if new_grid == socket.assigns.grid and new_notes == socket.assigns.notes do
+      socket
+    else
+      socket
+      |> assign(:undo_stack, [current_snapshot(socket) | socket.assigns.undo_stack])
+      |> assign(:redo_stack, [])
+      |> assign(:grid, new_grid)
+      |> assign(:notes, new_notes)
+      |> persist_state(new_grid, new_notes)
+    end
+  end
+
+  # Persist the server-derived board and notes so progress survives reconnect/deploy.
+  defp persist_state(socket, grid, notes) do
+    scope = socket.assigns.current_scope
+
+    with {:ok, attempt} <- Attempts.save_entries(scope, socket.assigns.attempt, Enum.join(grid)),
+         {:ok, attempt} <- Attempts.save_notes(scope, attempt, notes_to_storable(notes)) do
+      assign(socket, :attempt, attempt)
+    else
+      _ -> socket
+    end
+  end
+
+  # Notes assigns use integer cell positions; jsonb persists string keys.
+  defp notes_to_storable(notes) do
+    Map.new(notes, fn {pos, digits} -> {Integer.to_string(pos), digits} end)
+  end
+
+  defp notes_from_stored(notes) when is_map(notes) do
+    Map.new(notes, fn {pos, digits} ->
+      {String.to_integer(pos), digits |> Enum.map(&trunc/1) |> Enum.sort()}
+    end)
+  end
+
+  defp notes_from_stored(_), do: %{}
 
   # Load the current attempt for this user+puzzle and set view_state + grid assigns.
   # Called on mount and on state re-sync after stale errors.
@@ -817,6 +918,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
           |> assign(:view_state, view_state)
           |> assign(:grid, grid)
           |> assign(:focused_cell, focused)
+          |> assign(:notes, notes_from_stored(attempt.notes))
+          |> assign(:notes_mode, false)
 
         socket =
           if view_state == :completed do
@@ -842,6 +945,8 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
         |> assign(:view_state, :start)
         |> assign(:grid, build_grid(clues))
         |> assign(:focused_cell, first_editable_index(clues))
+        |> assign(:notes, %{})
+        |> assign(:notes_mode, false)
     end
   end
 
@@ -912,16 +1017,22 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     "#{minutes}:#{String.pad_leading(Integer.to_string(secs), 2, "0")}"
   end
 
-  defp cell_aria_label(row, col, true = _is_given, value) do
+  # Accessible label for a cell. Precedence: given digit, final value, notes,
+  # then empty — so a notes-only cell reads e.g. "Row 1, column 1, notes 1 4 7".
+  defp cell_label(row, col, true = _is_given, value, _notes) do
     "Row #{row + 1}, column #{col + 1}, given #{value}"
   end
 
-  defp cell_aria_label(row, col, false = _is_given, "0") do
-    "Row #{row + 1}, column #{col + 1}, empty"
+  defp cell_label(row, col, false = _is_given, value, _notes) when value != "0" do
+    "Row #{row + 1}, column #{col + 1}, value #{value}"
   end
 
-  defp cell_aria_label(row, col, false = _is_given, value) do
-    "Row #{row + 1}, column #{col + 1}, value #{value}"
+  defp cell_label(row, col, false = _is_given, _value, [_ | _] = notes) do
+    "Row #{row + 1}, column #{col + 1}, notes #{Enum.join(notes, " ")}"
+  end
+
+  defp cell_label(row, col, false = _is_given, _value, _notes) do
+    "Row #{row + 1}, column #{col + 1}, empty"
   end
 
   # CSS border class for 3x3 box visual grouping.

@@ -11,6 +11,11 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
     :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(pos)
   end
 
+  # Read the notes (candidate list, or nil) for a cell from server-side assigns.
+  defp notes_at(view, pos) do
+    :sys.get_state(view.pid).socket.assigns.notes |> Map.get(pos)
+  end
+
   # NOTE: This test module drives the server-side LiveView handlers.
   # True in-browser keyboard navigation and JS hooks (Timer, GridKeyboard,
   # InputModeDetect) require Wallaby and are out of scope for this step.
@@ -1249,5 +1254,106 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
   defp puzzle_for_scope_attempt(scope, puzzle) do
     {:ok, attempt} = Attempts.get_owner_attempt_for_puzzle(scope, puzzle.id)
     attempt
+  end
+
+  # ---------------------------------------------------------------------------
+  # Notes (pencil marks)
+  # ---------------------------------------------------------------------------
+  describe "notes mode" do
+    setup :register_and_log_in_user
+
+    setup %{scope: scope} do
+      puzzle = puzzle_fixture_secure()
+      {:ok, _attempt} = Attempts.start_attempt(scope, puzzle)
+      # Position 35 is the first editable (non-given) cell in the fixture.
+      {:ok, puzzle: puzzle}
+    end
+
+    test "toggling the Notes button flips its pressed state", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assert view |> element("[data-test='notes-toggle']") |> render() =~ ~s(aria-pressed="false")
+
+      view |> element("[data-test='notes-toggle']") |> render_click()
+      assert view |> element("[data-test='notes-toggle']") |> render() =~ ~s(aria-pressed="true")
+
+      view |> element("[data-test='notes-toggle']") |> render_click()
+      assert view |> element("[data-test='notes-toggle']") |> render() =~ ~s(aria-pressed="false")
+    end
+
+    test "in Notes mode a digit adds a candidate; the same digit removes it", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      view |> element("[data-test='notes-toggle']") |> render_click()
+
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "4"})
+      assert notes_at(view, 35) == [4]
+      # No final value placed.
+      assert grid_at(view, 35) == "0"
+
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "4"})
+      assert notes_at(view, 35) == nil
+    end
+
+    test "a noted cell renders its candidates (3x3) with an accurate aria-label", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      view |> element("[data-test='notes-toggle']") |> render_click()
+
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "7"})
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "1"})
+
+      html = render(view)
+      assert html =~ ~s(data-test="cell-notes")
+      # Sorted candidates in the label.
+      assert html =~ "notes 1 7"
+    end
+
+    test "placing a final value clears that cell's notes", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      view |> element("[data-test='notes-toggle']") |> render_click()
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "4"})
+      assert notes_at(view, 35) == [4]
+
+      # Notes off → place a final value.
+      view |> element("[data-test='notes-toggle']") |> render_click()
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "5"})
+
+      assert grid_at(view, 35) == "5"
+      assert notes_at(view, 35) == nil
+    end
+
+    test "erase clears both value and notes for the focused cell", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      render_hook(view, "cell_focus", %{"position" => 35})
+
+      # A noted cell, then erase.
+      view |> element("[data-test='notes-toggle']") |> render_click()
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "4"})
+      assert notes_at(view, 35) == [4]
+
+      view |> element("[data-test='erase-button']") |> render_click()
+      assert notes_at(view, 35) == nil
+      assert grid_at(view, 35) == "0"
+    end
+
+    test "undo and redo round-trip a note toggle", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      view |> element("[data-test='notes-toggle']") |> render_click()
+
+      render_hook(view, "cell_entry", %{"position" => 35, "value" => "4"})
+      assert notes_at(view, 35) == [4]
+
+      view |> element("[data-test='undo-button']") |> render_click()
+      assert notes_at(view, 35) == nil
+
+      view |> element("[data-test='redo-button']") |> render_click()
+      assert notes_at(view, 35) == [4]
+    end
   end
 end
