@@ -6,6 +6,11 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
 
   alias SudokuRace.Attempts
 
+  # Read a single cell from the live view's server-side grid assign.
+  defp grid_at(view, pos) do
+    :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(pos)
+  end
+
   # NOTE: This test module drives the server-side LiveView handlers.
   # True in-browser keyboard navigation and JS hooks (Timer, GridKeyboard,
   # InputModeDetect) require Wallaby and are out of scope for this step.
@@ -716,23 +721,111 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       assert has_element?(view, "[data-test='numpad-button']")
     end
 
-    test "the touch pad exposes an erase control that clears the focused cell", %{
+    test "the action bar (undo/redo/erase) is present in touch mode", %{
       conn: conn,
       puzzle: puzzle
     } do
       {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
 
       view |> element("[data-test='input-mode-toggle']") |> render_click()
-      assert has_element?(view, "[data-test='numpad-erase']")
 
-      # Focus an editable cell (35 is a non-given in the fixture) and enter a digit.
+      assert has_element?(view, "[data-test='action-bar']")
+      assert has_element?(view, "[data-test='undo-button']")
+      assert has_element?(view, "[data-test='redo-button']")
+      assert has_element?(view, "[data-test='erase-button']")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Undo / redo / erase
+  # ---------------------------------------------------------------------------
+  describe "undo, redo, and erase" do
+    setup :register_and_log_in_user
+
+    setup %{scope: scope} do
+      puzzle = puzzle_fixture_secure()
+      {:ok, attempt} = Attempts.start_attempt(scope, puzzle)
+      {:ok, puzzle: puzzle, attempt: attempt}
+    end
+
+    test "clicking the number pad enters the digit into the selected cell", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      # Select an editable cell by clicking it, exactly as a user would.
+      # (35 is a non-given cell in the fixture.)
+      view |> element("[data-test='grid-cell'][data-position='35']") |> render_click()
+
+      # Click the rendered "7" button on the pad — exercises the real markup,
+      # not just the handler, so a button-wiring regression would be caught.
+      view |> element("[data-test='numpad-button']", "7") |> render_click()
+
+      assert grid_at(view, 35) == "7"
+    end
+
+    test "erase clears the focused cell", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      # 35 is a non-given (editable) cell in the fixture.
       render_hook(view, "cell_focus", %{"position" => "35"})
       render_hook(view, "cell_entry", %{"position" => "35", "value" => "7"})
-      assert :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(35) == "7"
+      assert grid_at(view, 35) == "7"
 
-      view |> element("[data-test='numpad-erase']") |> render_click()
+      view |> element("[data-test='erase-button']") |> render_click()
 
-      assert :sys.get_state(view.pid).socket.assigns.grid |> Enum.at(35) == "0"
+      assert grid_at(view, 35) == "0"
+    end
+
+    test "undo reverts the last entry and redo re-applies it", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      render_hook(view, "cell_entry", %{"position" => "35", "value" => "7"})
+      assert grid_at(view, 35) == "7"
+
+      render_hook(view, "undo", %{})
+      assert grid_at(view, 35) == "0"
+
+      render_hook(view, "redo", %{})
+      assert grid_at(view, 35) == "7"
+    end
+
+    test "a fresh entry clears the redo stack", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      render_hook(view, "cell_entry", %{"position" => "35", "value" => "7"})
+      render_hook(view, "undo", %{})
+      # New entry after an undo discards the redo history.
+      render_hook(view, "cell_entry", %{"position" => "35", "value" => "4"})
+
+      assert has_element?(view, "[data-test='redo-button'][disabled]")
+      assert grid_at(view, 35) == "4"
+    end
+
+    test "undo and redo are safe no-ops with empty history", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      before = :sys.get_state(view.pid).socket.assigns.grid
+      render_hook(view, "undo", %{})
+      render_hook(view, "redo", %{})
+      assert :sys.get_state(view.pid).socket.assigns.grid == before
+    end
+
+    test "undo/redo buttons reflect availability via the disabled attribute", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+
+      assert has_element?(view, "[data-test='undo-button'][disabled]")
+      assert has_element?(view, "[data-test='redo-button'][disabled]")
+
+      render_hook(view, "cell_entry", %{"position" => "35", "value" => "7"})
+      refute has_element?(view, "[data-test='undo-button'][disabled]")
+
+      render_hook(view, "undo", %{})
+      refute has_element?(view, "[data-test='redo-button'][disabled]")
     end
   end
 
