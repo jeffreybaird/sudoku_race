@@ -1076,6 +1076,40 @@ defmodule SudokuRace.AttemptsTest do
   end
 
   # ---------------------------------------------------------------------------
+  # save_notes/3
+  # ---------------------------------------------------------------------------
+  describe "save_notes/3" do
+    setup do
+      scope = user_scope_fixture()
+      {:ok, attempt} = Attempts.start_attempt(scope, easy_puzzle_fixture())
+      {:ok, scope: scope, attempt: attempt}
+    end
+
+    test "persists notes for the owner while in progress", ctx do
+      notes = %{"35" => [1, 4, 7], "40" => [2]}
+      assert {:ok, saved} = Attempts.save_notes(ctx.scope, ctx.attempt, notes)
+      assert saved.notes == notes
+
+      assert Attempts.get_attempt(ctx.scope, ctx.attempt.id) |> elem(1) |> Map.get(:notes) ==
+               notes
+    end
+
+    test "returns :forbidden for a non-owner", ctx do
+      other = user_scope_fixture()
+      assert {:error, :forbidden} = Attempts.save_notes(other, ctx.attempt, %{"35" => [1]})
+    end
+
+    test "returns :not_in_progress when the attempt is paused", ctx do
+      {:ok, paused} = Attempts.pause_attempt(ctx.scope, ctx.attempt)
+      assert {:error, :not_in_progress} = Attempts.save_notes(ctx.scope, paused, %{"35" => [1]})
+    end
+
+    test "returns :not_found for an unknown id", ctx do
+      assert {:error, :not_found} = Attempts.save_notes(ctx.scope, 999_999_999, %{"35" => [1]})
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # list_in_progress_attempts/2
   # ---------------------------------------------------------------------------
   describe "list_in_progress_attempts/2" do
