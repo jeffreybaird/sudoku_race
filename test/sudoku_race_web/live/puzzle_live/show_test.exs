@@ -572,6 +572,29 @@ defmodule SudokuRaceWeb.PuzzleLive.ShowTest do
       assert html =~ ~s(aria-label="Enter 1")
     end
 
+    test "grid exposes data-focused-cell for the keyboard hook", %{conn: conn, puzzle: puzzle} do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      html = render(view)
+
+      # The GridKeyboard hook drives off this server attribute (not browser focus,
+      # which Safari/Firefox don't set on a clicked <button>). Must be present.
+      assert html =~ ~s(data-focused-cell=)
+    end
+
+    test "pad uses phx-value-digit, not phx-value-value (button .value collision)", %{
+      conn: conn,
+      puzzle: puzzle
+    } do
+      {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
+      html = render(view)
+
+      # `phx-value-value` on a <button> is silently overridden by the element's
+      # intrinsic empty `.value` in the browser, so the server received "" and
+      # the pad did nothing. The param must be named something else.
+      assert html =~ "phx-value-digit"
+      refute html =~ "phx-value-value"
+    end
+
     test "aria-live region exists", %{conn: conn, puzzle: puzzle} do
       {:ok, view, _html} = live(conn, ~p"/puzzles/#{puzzle.id}")
       assert has_element?(view, "[aria-live='polite']")

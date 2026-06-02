@@ -205,7 +205,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
   end
 
   @impl true
-  def handle_event("pad_entry", %{"value" => value}, socket) do
+  def handle_event("pad_entry", %{"digit" => value}, socket) do
     {:noreply, apply_entry(socket, socket.assigns.focused_cell, value)}
   end
 
@@ -455,6 +455,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
               aria-label="Sudoku puzzle"
               data-test="sudoku-grid"
               data-input-mode={to_string(@input_mode)}
+              data-focused-cell={@focused_cell}
               phx-hook=".GridKeyboard"
               class="grid grid-cols-9 border-2 border-gray-800 rounded-sm select-none"
             >
@@ -532,7 +533,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                 type="button"
                 data-test="erase-button"
                 phx-click="pad_entry"
-                phx-value-value="0"
+                phx-value-digit="0"
                 aria-label="Erase cell"
                 class={action_button_class()}
               >
@@ -548,7 +549,7 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                     type="button"
                     data-test="numpad-button"
                     phx-click="pad_entry"
-                    phx-value-value={Integer.to_string(digit)}
+                    phx-value-digit={Integer.to_string(digit)}
                     class={numpad_button_class(@input_mode)}
                     aria-label={"Enter #{digit}"}
                   >
@@ -683,12 +684,18 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
     <script :type={Phoenix.LiveView.ColocatedHook} name=".GridKeyboard">
       export default {
         mounted() {
-          this.el.addEventListener("keydown", (e) => {
-            const active = document.activeElement;
-            const pos = active && active.dataset.position !== undefined
-              ? parseInt(active.dataset.position, 10)
-              : null;
-            if (pos === null) return;
+          // Drive off the SERVER's focused cell (data-focused-cell), not
+          // document.activeElement: macOS Safari/Firefox don't focus a <button>
+          // on click, so activeElement-based input never fired there. Listening
+          // on document also means typing works immediately, without a click.
+          this._onKeydown = (e) => {
+            // Don't hijack keys while typing in a real text field.
+            const tag = (document.activeElement && document.activeElement.tagName) || "";
+            if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+            const raw = this.el.dataset.focusedCell;
+            const pos = raw === undefined || raw === "" ? null : parseInt(raw, 10);
+            if (pos === null || Number.isNaN(pos)) return;
 
             const arrowMoves = {
               ArrowUp: pos - 9,
@@ -704,11 +711,17 @@ defmodule SudokuRaceWeb.PuzzleLive.Show do
                 this.pushEvent("cell_focus", { position: next });
               }
             } else if (e.key >= "1" && e.key <= "9") {
+              e.preventDefault();
               this.pushEvent("cell_entry", { position: pos, value: e.key });
             } else if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") {
+              e.preventDefault();
               this.pushEvent("cell_entry", { position: pos, value: "0" });
             }
-          });
+          };
+          document.addEventListener("keydown", this._onKeydown);
+        },
+        destroyed() {
+          document.removeEventListener("keydown", this._onKeydown);
         }
       }
     </script>
